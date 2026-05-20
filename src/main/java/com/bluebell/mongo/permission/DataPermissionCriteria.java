@@ -33,23 +33,22 @@ public final class DataPermissionCriteria {
     }
 
     public static Criteria orgCriteria(String field) {
+        if (DataPermissionContext.denyAll()) {
+            return Criteria.where(field).is("__NO_PERMISSION__");
+        }
         List<String> orgIds = DataPermissionContext.organizationIds();
         if (orgIds.isEmpty()) {
-            // 非 allowAll 且无组织 → 查不到数据
             return Criteria.where(field).is("__NO_PERMISSION__");
         }
         return Criteria.where(field).in(orgIds);
     }
 
-    /**
-     * upsert/insert 写入组织字段（取权限范围内第一个，或由业务在 DTO 自带）。
-     */
     public static Update applyInsertOrg(Update update) {
         return applyInsertOrg(update, DataPermissionContext.field());
     }
 
     public static Update applyInsertOrg(Update update, String field) {
-        if (!DataPermissionContext.isActive()) {
+        if (!DataPermissionContext.isActive() || DataPermissionContext.denyAll()) {
             return update;
         }
         List<String> orgIds = DataPermissionContext.organizationIds();
@@ -59,12 +58,12 @@ public final class DataPermissionCriteria {
         return update;
     }
 
-    /**
-     * 校验本条数据的 organizationId 是否在权限范围内。
-     */
     public static void assertWritable(String organizationId) {
         if (!DataPermissionContext.shouldFilter()) {
             return;
+        }
+        if (DataPermissionContext.denyAll()) {
+            throw new DataPermissionDeniedException("无组织数据权限（业务机构与用户权限无交集）");
         }
         List<String> orgIds = DataPermissionContext.organizationIds();
         if (organizationId == null || !orgIds.contains(organizationId)) {

@@ -28,7 +28,7 @@
 | 批量 upsert | 替代「先 `find` 再 `insert/update`」，减少网络往返，100 条由约 2s 降至约 0.1～0.3s（4C8G 经验值） |
 | 四表同事务 | 主表、最新消息、微信更新时间、消息类型字典一次事务写入 |
 | 幂等与防旧盖新 | `uniqueId` 去重；`msgTime` 只向前更新，避免乱序覆盖 |
-| `@DataPermission` | Service 方法标注后，自动拼接 `organizationId in (...)` |
+| `@DataPermission` | 用户权限 ∩ 业务机构子树，自动拼接 `organizationId in (...)` |
 | Aggregation 权限 | 管道最前自动插入 `$match`；支持 Spring DSL 与原生 `Document` 管道 |
 | 可扩展 | `MongoBulkHelper` 可供非微信业务复用 |
 
@@ -67,18 +67,25 @@ spring:
       uri: mongodb://user:pass@host1:27017,host2:27017/your_db?authSource=admin&replicaSet=rs0
 ```
 
-### 3. 实现组织权限（必做）
+### 3. 实现组织权限（必做，两个接口）
 
 ```java
+/** ① 当前用户数据权限范围内的机构 ID */
 @Service
 public class YourOrganizationPermissionService implements OrganizationPermissionService {
-
     @Override
     public List<String> resolveOrganizationIds() {
-        // 从登录用户 / JWT / 租户上下文解析
         return loginUser.getOrganizationIds();
-        // 超级管理员可返回 Collections.emptyList()，
-        // 并配合 @DataPermission(allowAllWhenEmpty = true) 表示不过滤
+        // 超管：return Collections.emptyList();
+    }
+}
+
+/** ② 业务机构 + 所有子机构 */
+@Service
+public class YourOrganizationHierarchyService implements OrganizationHierarchyService {
+    @Override
+    public List<String> resolveSelfAndChildren(String organizationId) {
+        return orgRepository.findSelfAndDescendantIds(organizationId);
     }
 }
 ```
@@ -194,32 +201,71 @@ db.wx_msg_type.createIndex({ type: 1 }, { unique: true })
 
 ## 组织数据权限
 
-### 注解说明
+### 核心公式
 
-```java
-@DataPermission                              // 默认字段 organizationId
-@DataPermission(field = "organizationId")    // 显式指定字段
-@DataPermission(allowAllWhenEmpty = true)   // 权限列表为空时不过滤（超管）
+```text
+最终机构范围 = 用户数据权限机构
+              ∩
+              （业务传入机构 + 其所有子机构）   ← 业务未传机构时，仅按用户权限
 ```
 
-- 标注在 **Service 方法**上（建议不要只标 Controller）。
-- 由 `DataPermissionAspect` 在方法进入时解析 `OrganizationPermissionService`，写入 `ThreadLocal`，结束后清理。
+由 `DataPermissionResolver` 计算，结果写入 `DataPermissionContext`，Mongo 条件为：
+
+```javascript
+{ organizationId: { $in: [最终机构ID...] } }
+```
+
+### 两个必实现接口
+
+| 接口 | 职责 |
+|------|------|
+| `OrganizationPermissionService` | 当前登录用户可访问的机构 ID 列表 |
+| `OrganizationHierarchyService` | 给定业务机构 ID，返回 **自身 + 全部子机构** ID |
+
+### 注解与业务机构入参
+
+```java
+// 方式1：@BizOrgId 标注参数（推荐）
+@DataPermission
+public List<Vo> query(@BizOrgId String organizationId, String wxId) { ... }
+
+// 方式2：按参数名（pom 已开启 -parameters）
+@DataPermission(bizOrgParam = "organizationId")
+public List<Vo> query(String organizationId) { ... }
+
+// 仅用户权限，不传业务机构
+@DataPermission
+public List<Vo> query() { ... }
+```
+
+| 注解属性 | 说明 |
+|----------|------|
+| `field` | 文档字段名，默认 `organizationId` |
+| `bizOrgParam` | 业务机构参数名 |
+| `includeBizChildren` | 是否展开子机构，默认 `true` |
+| `allowAllWhenEmpty` | 用户权限为空是否视为超管，默认 `true` |
+
+### 决策表（最终 Mongo 过滤）
+
+| 用户权限 | 业务机构参数 | 结果 |
+|----------|--------------|------|
+| 超管（空 + allowAll） | 未传 | **不过滤** |
+| 超管 | 传入 `org_A` | 仅 `org_A` 子树：`in (A, A1, A2...)` |
+| 普通用户 `[A,B]` | 未传 | `in (A, B)` |
+| 普通用户 `[A,B]` | 传入 `A`（子树 A,A1） | `in (A, A1)`（交集） |
+| 普通用户 `[A,B]` | 传入 `C` | **无权限**（交集为空，查不到数据） |
 
 ### 生效范围
 
 | 操作类型 | 实现方式 |
 |----------|----------|
-| `find` / `count` / `remove` | `DataPermissionMongoTemplate` 自动 `query.addCriteria(organizationId in ...)` |
-| `aggregate` | 管道最前插入 `$match: { organizationId: { $in: [...] } }` |
-| bulk 写入 | `DataPermissionMongoBulkHelper` 包装 Query；`setOnInsert` 写入组织 |
+| `find` / `count` / `remove` | `DataPermissionMongoTemplate` |
+| `aggregate` | `DataPermissionAggregation.prependOrgMatch` 或上述 Template |
+| bulk 写入 | `DataPermissionMongoBulkHelper` |
 
-### 无权限时的行为
+### 写入校验
 
-| `resolveOrganizationIds()` | `allowAllWhenEmpty` | 结果 |
-|--------------------------|---------------------|------|
-| 空列表 | `true` | 不拼接过滤（超管） |
-| 空列表 | `false` | 拼不可能命中条件，查不到数据 |
-| 非空 | 任意 | `organizationId in (列表)` |
+批量写入前会 `assertWritable(dto.getOrganizationId())`，`organizationId` 必须在**最终交集**内。
 
 ---
 
@@ -400,8 +446,11 @@ A：使用 `DataPermissionMongoTemplate`，或 `DataPermissionAggregation.prepen
 **Q：最新消息被旧数据覆盖？**  
 A：确认 `msgTime` 正确；latest 表已用 `TimeForwardCriteria.timeForward`；同批已 `MergeUtils.mergeByKey`。
 
+**Q：业务传了机构 ID 但仍查到别的机构数据？**  
+A：确认方法参数有 `@BizOrgId` 或 `bizOrgParam`；实现 `OrganizationHierarchyService`；编译开启 `-parameters`。
+
 **Q：如何接入现有工程？**  
-A：复制 `com.bluebell.mongo` 包或添加模块依赖 → 实现 `OrganizationPermissionService` → 替换 find+save 为 `DataPermissionWxMsgBatchWriter`。
+A：实现 `OrganizationPermissionService` + `OrganizationHierarchyService` → Service 方法加 `@DataPermission` 与 `@BizOrgId` → 使用 `DataPermissionMongoTemplate` / `DataPermissionWxMsgBatchWriter`。
 
 ---
 
@@ -414,7 +463,10 @@ A：复制 `com.bluebell.mongo` 包或添加模块依赖 → 实现 `Organizatio
 | `DataPermissionWxMsgBatchWriter` | 微信四表 + `organizationId` |
 | `DataPermission` | 权限注解 |
 | `DataPermissionAspect` | 注解 AOP |
-| `OrganizationPermissionService` | **业务实现**组织 ID 列表 |
+| `OrganizationPermissionService` | **业务实现**用户组织 ID 列表 |
+| `OrganizationHierarchyService` | **业务实现**机构子树查询 |
+| `DataPermissionResolver` | 用户权限 ∩ 业务子树 |
+| `BizOrgId` | 标注业务机构参数 |
 | `DataPermissionCriteria` | Query/Update 拼条件 |
 | `DataPermissionAggregation` | Aggregation prepend `$match` |
 | `DataPermissionMongoTemplate` | find/aggregate 自动权限 |

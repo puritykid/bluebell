@@ -18,13 +18,25 @@ import java.util.List;
 public class DataPermissionAspect {
 
     private final OrganizationPermissionService permissionService;
+    private final OrganizationHierarchyService hierarchyService;
 
     @Around("@annotation(com.bluebell.mongo.permission.DataPermission)")
     public Object around(ProceedingJoinPoint pjp) throws Throwable {
         Method method = ((MethodSignature) pjp.getSignature()).getMethod();
         DataPermission ann = method.getAnnotation(DataPermission.class);
-        List<String> orgIds = permissionService.resolveOrganizationIds();
-        DataPermissionContext.set(ann.field(), orgIds, ann.allowAllWhenEmpty());
+
+        List<String> userOrgIds = permissionService.resolveOrganizationIds();
+        String bizOrgId = DataPermissionParamResolver.resolveBizOrgId(pjp, ann);
+
+        DataPermissionResolver.ResolveResult result = DataPermissionResolver.resolve(
+                userOrgIds,
+                bizOrgId,
+                hierarchyService,
+                ann.includeBizChildren(),
+                ann.allowAllWhenEmpty()
+        );
+
+        DataPermissionContext.set(ann.field(), result);
         try {
             return pjp.proceed();
         } finally {
