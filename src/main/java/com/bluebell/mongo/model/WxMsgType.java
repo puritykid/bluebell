@@ -14,10 +14,10 @@ import java.time.LocalDateTime;
 
 @Data
 @Document("wx_msg_type")
-@UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY)
+@UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY, generateIdOnInsert = true)
 public class WxMsgType {
     @Id
-    private String id;
+    private Long id;
     @UpsertKey
     @Indexed(unique = true)
     private String type;

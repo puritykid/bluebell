@@ -27,6 +27,6 @@ public @interface UpsertEntity {
     /** 主键字段名，默认 _id；仅插入且值为空时可自动生成 */
     String idField() default "_id";
 
-    /** 是否在 insert 时自动生成主键（需配合 {@link UpsertIdGenerator}） */
-    boolean generateIdOnInsert() default false;
+    /** 是否在 insert 时自动生成雪花主键（需配合 {@link UpsertIdGenerator}） */
+    boolean generateIdOnInsert() default true;
 }

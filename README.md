@@ -388,9 +388,82 @@ Aggregation.lookup()
 
 ---
 
+## 反射批量 Upsert（注解驱动，推荐）
+
+无需手写 `Update.set("field", ...)`，在**实体字段**上加注解，由 `ReflectiveMongoBulkHelper` 反射构建 Query/Update。
+
+### 实体级注解 `@UpsertEntity`
+
+| strategy | 含义 |
+|----------|------|
+| `INSERT_ONLY` | 按业务键：不存在插入，存在忽略（字段默认 `setOnInsert`） |
+| `FULL_BY_KEY` | 按业务键：不存在插入，存在则**全量 set 更新** |
+| `UPSERT_IF_NEWER` | 按业务键 + `timeField`：仅时间向前才更新 |
+
+```java
+@UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY)
+public class WxMsgMain {
+    @UpsertKey
+    private String uniqueId;
+    private String wxId;   // 默认 INSERT_ONLY
+}
+
+@UpsertEntity(
+    strategy = UpsertStrategy.UPSERT_IF_NEWER,
+    timeField = "msgTime",
+    generateIdOnInsert = true
+)
+public class WxMsgLatest {
+    @Id private Long id;
+    @UpsertKey private String wxId;
+    @UpsertKey private String chatType;
+    @UpsertKey private String talker;
+    private LocalDateTime msgTime;  // 默认 ALWAYS
+}
+```
+
+### 字段级注解 `@UpsertField`（覆盖默认）
+
+| mode | 说明 |
+|------|------|
+| `KEY` | 查询键，仅 `setOnInsert` 写入键值 |
+| `INSERT_ONLY` | 仅插入 |
+| `ALWAYS` | 插入/更新都 set |
+| `IGNORE` | 不参与 |
+
+```java
+@UpsertField(mode = FieldUpsertMode.IGNORE)
+private String tempField;
+```
+
+也可用 `@UpsertEntity(keys = {"orderNo"})` 代替多个 `@UpsertKey`。
+
+### 调用
+
+```java
+@Autowired ReflectiveMongoBulkHelper reflectiveBulk;
+
+@DataPermission
+public void saveOrders(@BizOrgId String orgId, List<Order> orders) {
+    reflectiveBulk.bulkUpsertByEntity(Order.class, orders, true);
+}
+
+// 微信四表（已封装）
+@Autowired ReflectiveWxMsgBatchWriter reflectiveWxWriter;
+
+@DataPermission
+public void save(@BizOrgId String organizationId, List<WxMsgDTO> list) {
+    reflectiveWxWriter.writeBatchInTransaction(list);
+}
+```
+
+新增实体只需：**加注解 → `bulkUpsertByEntity`**，与数据权限、`@DataPermission` 自动兼容。
+
+---
+
 ## 通用 Bulk API
 
-适用于非微信业务表。
+适用于非微信业务表（手写 Query/Update 的底层 API）。
 
 ```java
 @Autowired
@@ -476,6 +549,9 @@ A：实现 `OrganizationPermissionService` + `OrganizationHierarchyService` → 
 | `DataPermissionMongoBulkHelper` | bulk 自动权限 |
 | `TimeForwardCriteria` | 时间只向前查询条件 |
 | `MergeUtils` | 批内按键合并 |
+| `ReflectiveMongoBulkHelper` | 注解 + 反射通用 bulk |
+| `@UpsertEntity` / `@UpsertKey` | 实体 upsert 策略与业务键 |
+| `ReflectiveWxMsgBatchWriter` | 微信四表反射批量写 |
 | `MongoBulkConfig` | 事务管理器、Writer Bean |
 | `SnowflakeIdGenerator` | 最新消息表 `_id` 雪花 |
 

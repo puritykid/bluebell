@@ -12,10 +12,14 @@ import java.time.LocalDateTime;
 
 @Data
 @Document("wx_last_time")
-@UpsertEntity(strategy = UpsertStrategy.UPSERT_IF_NEWER, timeField = "lastMsgTime")
+@UpsertEntity(
+        strategy = UpsertStrategy.UPSERT_IF_NEWER,
+        timeField = "lastMsgTime",
+        generateIdOnInsert = true
+)
 public class WxLastTime {
     @Id
-    private String id;
+    private Long id;
     @UpsertKey
     @Indexed(unique = true)
     private String wxId;

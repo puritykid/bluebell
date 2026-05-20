@@ -43,11 +43,8 @@ public final class ReflectiveUpsertBuilder {
     public static Update buildUpdate(Object entity, EntityUpsertDefinition def, UpsertIdGenerator idGenerator) {
         Update update = new Update();
 
-        if (def.generateIdOnInsert() && idGenerator != null) {
-            Object idVal = readFieldByMongoName(entity, def, def.idField());
-            if (idVal == null || (idVal instanceof String s && s.isBlank())) {
-                update.setOnInsert(def.idField(), idGenerator.nextId(def.entityClass()));
-            }
+        if (def.generateIdOnInsert() && idGenerator != null && isIdEmpty(entity, def)) {
+            update.setOnInsert(def.idField(), idGenerator.nextId(def.entityClass()));
         }
 
         for (EntityUpsertDefinition.FieldMeta key : def.keyFields()) {
@@ -96,6 +93,36 @@ public final class ReflectiveUpsertBuilder {
             }
         }
         throw new IllegalArgumentException("timeField 未在实体中找到: " + mongoName);
+    }
+
+    private static boolean isIdEmpty(Object entity, EntityUpsertDefinition def) {
+        Object idVal = readIdValue(entity, def);
+        if (idVal == null) {
+            return true;
+        }
+        if (idVal instanceof String s) {
+            return s.isBlank();
+        }
+        if (idVal instanceof Number n) {
+            return n.longValue() == 0L;
+        }
+        return false;
+    }
+
+    private static Object readIdValue(Object entity, EntityUpsertDefinition def) {
+        for (EntityUpsertDefinition.FieldMeta field : def.payloadFields()) {
+            if (def.idField().equals(field.mongoName())) {
+                return field.read(entity);
+            }
+        }
+        try {
+            java.lang.reflect.Field f = entity.getClass().getDeclaredField(
+                    "_id".equals(def.idField()) ? "id" : def.idField());
+            f.setAccessible(true);
+            return f.get(entity);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            return readFieldByMongoName(entity, def, def.idField());
+        }
     }
 
     public record QueryUpdate(Query query, Update update) {

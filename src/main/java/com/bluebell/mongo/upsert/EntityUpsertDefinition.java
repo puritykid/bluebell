@@ -124,7 +124,7 @@ public final class EntityUpsertDefinition {
         static FieldMeta of(java.lang.reflect.Field f, UpsertEntity entityAnn) {
             UpsertField fieldAnn = f.getAnnotation(UpsertField.class);
             FieldUpsertMode mode = resolveMode(f, fieldAnn, entityAnn.strategy());
-            String mongoName = resolveMongoName(f, fieldAnn);
+            String mongoName = f.isAnnotationPresent(Id.class) ? "_id" : resolveMongoName(f, fieldAnn);
             return new FieldMeta(f, mongoName, mode);
         }
 
