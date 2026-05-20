@@ -5,6 +5,10 @@ import com.bluebell.mongo.bulk.WxMsgBatchWriter;
 import com.bluebell.mongo.permission.DataPermissionWxMsgBatchWriter;
 import com.bluebell.mongo.permission.DataPermissionMongoBulkHelper;
 import com.bluebell.mongo.support.SnowflakeIdGenerator;
+import com.bluebell.mongo.upsert.ReflectiveMongoBulkHelper;
+import com.bluebell.mongo.upsert.ReflectiveWxMsgBatchWriter;
+import com.bluebell.mongo.upsert.SnowflakeUpsertIdGenerator;
+import com.bluebell.mongo.upsert.UpsertIdGenerator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.mongodb.MongoTransactionManager;
@@ -42,5 +46,22 @@ public class MongoBulkConfig {
             DataPermissionMongoBulkHelper dataPermissionMongoBulkHelper,
             SnowflakeIdGenerator snowflake) {
         return new DataPermissionWxMsgBatchWriter(dataPermissionMongoBulkHelper, snowflake);
+    }
+
+    @Bean
+    public UpsertIdGenerator upsertIdGenerator(SnowflakeIdGenerator snowflake) {
+        return new SnowflakeUpsertIdGenerator(snowflake);
+    }
+
+    @Bean
+    public ReflectiveMongoBulkHelper reflectiveMongoBulkHelper(
+            MongoBulkHelper mongoBulkHelper,
+            UpsertIdGenerator upsertIdGenerator) {
+        return new ReflectiveMongoBulkHelper(mongoBulkHelper, upsertIdGenerator);
+    }
+
+    @Bean
+    public ReflectiveWxMsgBatchWriter reflectiveWxMsgBatchWriter(ReflectiveMongoBulkHelper reflectiveMongoBulkHelper) {
+        return new ReflectiveWxMsgBatchWriter(reflectiveMongoBulkHelper);
     }
 }

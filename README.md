@@ -151,8 +151,11 @@ src/main/java/com/bluebell/mongo/
 │   ├── OrganizationPermissionService.java
 │   └── example/             # 参考示例（可复制改造）
 ├── model/                   # 实体与 DTO
-├── config/                  # MongoTransactionManager 等 Bean
-└── support/
+    ├── upsert/                  # 注解 + 反射 bulk
+    │   ├── ReflectiveMongoBulkHelper.java
+    │   └── ReflectiveWxMsgBatchWriter.java
+    ├── config/                  # MongoTransactionManager 等 Bean
+    └── support/
     └── SnowflakeIdGenerator.java
 ```
 
