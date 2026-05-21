@@ -24,7 +24,7 @@ public class WxMsgMain {
     private String wxId;
     private String chatType;
     private String talker;
-    private String type;
+    private Object type;
     private Object content;
     private LocalDateTime msgTime;
 }

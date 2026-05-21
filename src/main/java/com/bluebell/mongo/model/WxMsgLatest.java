@@ -29,7 +29,7 @@ public class WxMsgLatest {
     private String talker;
 
     private String uniqueId;
-    private String type;
+    private Object type;
     private Object content;
     private LocalDateTime msgTime;
 }

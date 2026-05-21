@@ -156,7 +156,7 @@ src/main/java/com/bluebell/mongo/
 | `wxId` | 微信 ID |
 | `chatType` | 会话类型 |
 | `talker` | 对方 ID |
-| `type` | 消息类型（字典） |
+| `type` | 消息类型（`Integer` 或 `String`，字典按原类型去重） |
 | `content` | 内容 |
 | `msgTime` | 消息时间（用于比「新/旧」） |
 

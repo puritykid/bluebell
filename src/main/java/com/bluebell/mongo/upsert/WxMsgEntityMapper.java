@@ -1,6 +1,7 @@
 package com.bluebell.mongo.upsert;
 
 import com.bluebell.mongo.model.*;
+import com.bluebell.mongo.support.MsgTypeUtils;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -48,7 +49,7 @@ public final class WxMsgEntityMapper {
     public static List<WxMsgType> toTypeList(List<com.bluebell.mongo.model.WxMsgDTO> batch) {
         return batch.stream()
                 .map(com.bluebell.mongo.model.WxMsgDTO::getType)
-                .filter(t -> t != null && !t.isBlank())
+                .filter(MsgTypeUtils::isPresent)
                 .distinct()
                 .map(type -> {
                     WxMsgType e = new WxMsgType();

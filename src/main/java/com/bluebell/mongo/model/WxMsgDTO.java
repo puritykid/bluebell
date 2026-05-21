@@ -11,7 +11,8 @@ public class WxMsgDTO {
     private String wxId;
     private String chatType;
     private String talker;
-    private String type;
+    /** 消息类型：业务可能是 Integer 或 String */
+    private Object type;
     private Object content;
     private LocalDateTime msgTime;
 }

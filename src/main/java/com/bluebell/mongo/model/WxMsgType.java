@@ -18,9 +18,10 @@ import java.time.LocalDateTime;
 public class WxMsgType {
     @Id
     private Long id;
+    /** 字典键：Integer / String 均可，与入库 type 类型一致 */
     @UpsertKey
     @Indexed(unique = true)
-    private String type;
+    private Object type;
     @UpsertField(mode = FieldUpsertMode.INSERT_ONLY)
     private LocalDateTime createTime;
 }
