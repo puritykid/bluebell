@@ -4,8 +4,10 @@ import java.lang.annotation.*;
 
 /**
  * 标注在 Service 方法上，开启组织数据权限。
- * 在方法执行期间，Mongo 查询/更新/删除会自动拼接 organizationId 条件；
- * 插入/upsert 会自动写入当前组织（或权限范围内的组织）。
+ * <p>
+ * 最终可访问机构 = <b>用户数据权限</b> ∩ <b>（业务传入机构 + 其子机构）</b>。
+ * 业务未传机构时，仅按用户数据权限过滤。
+ * 用户为超管且未传业务机构时，不过滤。
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
@@ -16,8 +18,17 @@ public @interface DataPermission {
     String field() default "organizationId";
 
     /**
-     * 是否允许跨组织（超级管理员）。
-     * true 且权限服务返回 empty 表示不过滤。
+     * 业务机构 ID 的参数名（需编译参数名：{@code -parameters}）。
+     * 与 {@link BizOrgId} 二选一；同时存在时优先 {@link BizOrgId}。
+     */
+    String bizOrgParam() default "";
+
+    /** 是否将业务机构展开为「自身 + 所有子机构」再参与交集 */
+    boolean includeBizChildren() default true;
+
+    /**
+     * 用户数据权限为空时是否视为超管（不过滤），
+     * 但若同时传入业务机构，则仍按业务子树过滤。
      */
     boolean allowAllWhenEmpty() default true;
 }

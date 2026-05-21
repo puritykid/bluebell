@@ -57,18 +57,20 @@ public class DataPermissionMongoBulkHelper {
         );
     }
 
-    public <S, E> BulkWriteResult bulkInsertOnlyDistinct(
+    public <S, E, K> BulkWriteResult bulkInsertOnlyDistinct(
             Class<E> entityClass,
             Collection<S> source,
-            Function<S, String> distinctKeyFn,
-            Function<String, Query> queryByKeyFn,
-            Function<String, Update> insertOnlyUpdateFn,
+            Function<S, K> distinctKeyFn,
+            Function<K, Query> queryByKeyFn,
+            Function<K, Update> insertOnlyUpdateFn,
             boolean ordered
     ) {
         return delegate.bulkInsertOnlyDistinct(
-                entityClass, source, distinctKeyFn,
+                entityClass,
+                source,
+                distinctKeyFn,
                 key -> DataPermissionCriteria.apply(queryByKeyFn.apply(key)),
-                upd -> wrapUpdateOne(insertOnlyUpdateFn.apply(key)),
+                key -> wrapUpdateOne(insertOnlyUpdateFn.apply(key)),
                 ordered
         );
     }

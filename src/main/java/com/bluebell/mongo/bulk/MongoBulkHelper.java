@@ -117,24 +117,27 @@ public class MongoBulkHelper {
     /**
      * 对集合去重后做「没有才插入」字典写入。
      */
-    public <S, E> BulkWriteResult bulkInsertOnlyDistinct(
+    public <S, E, K> BulkWriteResult bulkInsertOnlyDistinct(
             Class<E> entityClass,
             Collection<S> source,
-            Function<S, String> distinctKeyFn,
-            Function<String, Query> queryByKeyFn,
-            Function<String, Update> insertOnlyUpdateFn,
+            Function<S, K> distinctKeyFn,
+            Function<K, Query> queryByKeyFn,
+            Function<K, Update> insertOnlyUpdateFn,
             boolean ordered
     ) {
         if (source == null || source.isEmpty()) {
             return null;
         }
-        List<String> keys = source.stream().map(distinctKeyFn).distinct().toList();
+        List<K> keys = source.stream().map(distinctKeyFn).distinct().toList();
         BulkOperations.BulkMode mode = ordered
                 ? BulkOperations.BulkMode.ORDERED
                 : BulkOperations.BulkMode.UNORDERED;
         BulkOperations bulk = mongoTemplate.bulkOps(mode, entityClass);
-        for (String key : keys) {
-            if (key == null || key.isBlank()) {
+        for (K key : keys) {
+            if (key == null) {
+                continue;
+            }
+            if (key instanceof String s && s.isBlank()) {
                 continue;
             }
             bulk.upsert(queryByKeyFn.apply(key), insertOnlyUpdateFn.apply(key));

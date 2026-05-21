@@ -13,8 +13,8 @@ public final class DataPermissionContext {
     private DataPermissionContext() {
     }
 
-    public static void set(String field, List<String> organizationIds, boolean allowAllWhenEmpty) {
-        HOLDER.set(new Holder(field, organizationIds, allowAllWhenEmpty));
+    public static void set(String field, DataPermissionResolver.ResolveResult result) {
+        HOLDER.set(new Holder(field, result));
     }
 
     public static boolean isActive() {
@@ -28,12 +28,10 @@ public final class DataPermissionContext {
 
     public static List<String> organizationIds() {
         Holder h = HOLDER.get();
-        return h == null ? Collections.emptyList() : h.organizationIds();
-    }
-
-    public static boolean allowAllWhenEmpty() {
-        Holder h = HOLDER.get();
-        return h != null && h.allowAllWhenEmpty();
+        if (h == null) {
+            return Collections.emptyList();
+        }
+        return h.result().effectiveOrgIds();
     }
 
     /** 是否需要拼接权限条件 */
@@ -42,16 +40,19 @@ public final class DataPermissionContext {
         if (h == null) {
             return false;
         }
-        if (h.organizationIds().isEmpty() && h.allowAllWhenEmpty()) {
-            return false;
-        }
-        return true;
+        return !h.result().skipFilter();
+    }
+
+    /** 交集为空等情况，明确无数据权限 */
+    public static boolean denyAll() {
+        Holder h = HOLDER.get();
+        return h != null && h.result().denyAll();
     }
 
     public static void clear() {
         HOLDER.remove();
     }
 
-    private record Holder(String field, List<String> organizationIds, boolean allowAllWhenEmpty) {
+    private record Holder(String field, DataPermissionResolver.ResolveResult result) {
     }
 }
