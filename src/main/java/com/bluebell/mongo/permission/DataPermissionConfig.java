@@ -14,7 +14,9 @@ import com.bluebell.mongo.config.MongoUpsertConfig;
 import com.bluebell.mongo.permission.DataPermissionWxMsgBatchWriter;
 
 /**
- * 数据权限模块（可选）。与 {@link MongoUpsertConfig} 分开引入。
+ * 数据权限模块（<b>可选</b>，默认不要引入）。
+ * <p>
+ * 纯批量 upsert 只需 {@link com.bluebell.mongo.config.MongoUpsertConfig}。
  */
 @Configuration
 @EnableAspectJAutoProxy

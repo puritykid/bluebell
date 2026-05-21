@@ -1,6 +1,6 @@
 # bluebell-mongo
 
-基于 **Spring Boot 3.2 + Spring Data MongoDB 4.x** 的 MongoDB 工具库：批量写入（bulk upsert）、组织数据权限（`organizationId`）、Aggregation 管道权限、微信消息四表业务封装。
+基于 **Spring Boot 3.2 + Spring Data MongoDB 4.x** 的 MongoDB 工具库：**纯批量 upsert**（不存在插入、存在更新）、注解反射构建 Query/Update、微信消息四表封装。数据权限为**可选模块**，默认不引入。
 
 ---
 
@@ -8,16 +8,16 @@
 
 - [功能概览](#功能概览)
 - [环境要求](#环境要求)
-- [快速开始](#快速开始)
+- [快速开始（纯批量，无权限）](#快速开始纯批量无权限)
 - [项目结构](#项目结构)
 - [数据模型与表规则](#数据模型与表规则)
-- [组织数据权限](#组织数据权限)
 - [批量写入](#批量写入)
-- [Aggregation 使用](#aggregation-使用)
+- [反射批量 Upsert](#反射批量-upsert注解驱动推荐)
 - [通用 Bulk API](#通用-bulk-api)
 - [性能建议](#性能建议)
 - [常见问题](#常见问题)
 - [类与职责索引](#类与职责索引)
+- [可选：组织数据权限](#可选组织数据权限)
 
 ---
 
@@ -25,12 +25,12 @@
 
 | 能力 | 说明 |
 |------|------|
-| 批量 upsert | 替代「先 `find` 再 `insert/update`」，减少网络往返，100 条由约 2s 降至约 0.1～0.3s（4C8G 经验值） |
-| 四表同事务 | 主表、最新消息、微信更新时间、消息类型字典一次事务写入 |
-| 幂等与防旧盖新 | `uniqueId` 去重；`msgTime` 只向前更新，避免乱序覆盖 |
-| `@DataPermission` | 用户权限 ∩ 业务机构子树，自动拼接 `organizationId in (...)` |
-| Aggregation 权限 | 管道最前自动插入 `$match`；支持 Spring DSL 与原生 `Document` 管道 |
-| 可扩展 | `MongoBulkHelper` 可供非微信业务复用 |
+| 批量 upsert | 替代「先 `find` 再 `insert/update`」，100 条约 0.1～0.3s（4C8G 经验值） |
+| 不存在插入 / 存在更新 | `UpsertStrategy.FULL_BY_KEY` + 业务键 `@UpsertKey` |
+| 雪花 `_id` | `generateIdOnInsert = true` 时插入自动生成 `Long` 型 `_id` |
+| 四表同事务 | 主表、最新消息、微信更新时间、消息类型字典 |
+| 注解驱动 | 实体标注策略，无需手写 `Update.set` |
+| 可选数据权限 | 需要时再 `@Import(DataPermissionConfig.class)` |
 
 ---
 
@@ -49,16 +49,19 @@ mvn -q compile
 
 ---
 
-## 快速开始
+## 快速开始（纯批量，无权限）
 
-### 1. 扫描组件
+### 1. 引入配置（不要引入 `DataPermissionConfig`）
 
 ```java
-@SpringBootApplication(scanBasePackages = {"com.yourcompany", "com.bluebell.mongo"})
+@SpringBootApplication
+@Import(com.bluebell.mongo.config.MongoUpsertConfig.class)
 public class Application { }
 ```
 
-### 2. 配置 MongoDB
+或扫描包：`scanBasePackages = {"com.yourcompany", "com.bluebell.mongo"}`（同样**不要**扫描 `permission` 下的 Config，除非你明确要权限）。
+
+### 2. 配置 MongoDB（副本集，支持事务）
 
 ```yaml
 spring:
@@ -67,62 +70,43 @@ spring:
       uri: mongodb://user:pass@host1:27017,host2:27017/your_db?authSource=admin&replicaSet=rs0
 ```
 
-### 3. 实现组织权限（必做，两个接口）
-
-```java
-/** ① 当前用户数据权限范围内的机构 ID */
-@Service
-public class YourOrganizationPermissionService implements OrganizationPermissionService {
-    @Override
-    public List<String> resolveOrganizationIds() {
-        return loginUser.getOrganizationIds();
-        // 超管：return Collections.emptyList();
-    }
-}
-
-/** ② 业务机构 + 所有子机构 */
-@Service
-public class YourOrganizationHierarchyService implements OrganizationHierarchyService {
-    @Override
-    public List<String> resolveSelfAndChildren(String organizationId) {
-        return orgRepository.findSelfAndDescendantIds(organizationId);
-    }
-}
-```
-
-### 4. 批量保存消息
+### 3. 批量保存（不存在插入，存在更新）
 
 ```java
 @Service
 @RequiredArgsConstructor
 public class WxMsgService {
 
-    private final DataPermissionWxMsgBatchWriter batchWriter;
+    private final ReflectiveWxMsgBatchWriter wxMsgBatchWriter;
 
-    @DataPermission
+    /** 四表同事务；无 @DataPermission、无 organizationId 校验 */
     public void saveBatch(List<WxMsgDTO> list) {
-        batchWriter.writeBatchInTransaction(list);
+        wxMsgBatchWriter.writeBatchInTransaction(list);
     }
 }
 ```
 
-### 5. 聚合统计（自动带权限）
+### 4. 单表通用 upsert
 
 ```java
-@Service
-@RequiredArgsConstructor
-public class WxStatService {
+@Autowired ReflectiveMongoBulkHelper reflectiveBulk;
 
-    private final DataPermissionMongoTemplate mongoTemplate;
+public void saveLatest(List<WxMsgLatest> list) {
+    reflectiveBulk.bulkUpsertByEntity(WxMsgLatest.class, list, false);
+}
+```
 
-    @DataPermission
-    public List<WxStatVO> statByWx() {
-        Aggregation agg = Aggregation.newAggregation(
-                Aggregation.match(Criteria.where("deleted").is(false)),
-                Aggregation.group("wxId").count().as("cnt")
-        );
-        return mongoTemplate.aggregate(agg, "wx_msg_main", WxStatVO.class).getMappedResults();
-    }
+实体示例（`FULL_BY_KEY` = 按业务键：不存在插入 + 雪花 `_id`，存在则字段全量 `set`）：
+
+```java
+@UpsertEntity(strategy = UpsertStrategy.FULL_BY_KEY, generateIdOnInsert = true)
+public class WxMsgLatest {
+    @Id private Long id;
+    @UpsertKey private String wxId;
+    @UpsertKey private String chatType;
+    @UpsertKey private String talker;
+    private String uniqueId;
+    private LocalDateTime msgTime;
 }
 ```
 
@@ -167,7 +151,7 @@ src/main/java/com/bluebell/mongo/
 
 | 字段 | 说明 |
 |------|------|
-| `organizationId` | 组织 ID，权限与入库必填 |
+| `organizationId` | 可选业务字段；纯批量不做权限校验 |
 | `uniqueId` | 消息全局唯一 ID（消息自带） |
 | `wxId` | 微信 ID |
 | `chatType` | 会话类型 |
@@ -181,7 +165,7 @@ src/main/java/com/bluebell/mongo/
 | 集合 | 文档名 | 业务键 | 写入规则 |
 |------|--------|--------|----------|
 | 主表 | `wx_msg_main` | `uniqueId` | **仅插入**：已存在则忽略（`setOnInsert`） |
-| 最新消息 | `wx_msg_latest` | `wxId + chatType + talker` | **不存在插入**（雪花 `_id`），**存在则更新**；仅当 `msgTime` ≥ 库中才更新 |
+| 最新消息 | `wx_msg_latest` | `wxId + chatType + talker` | **不存在插入**（雪花 `_id`），**存在则全量更新**（`FULL_BY_KEY`） |
 | 微信更新时间 | `wx_last_time` | `wxId` | 本批取 `max(msgTime)`，仅向前推进 `lastMsgTime` |
 | 消息类型字典 | `wx_msg_type` | `type`（全局） | **仅插入**：新类型入库，已存在不改动 |
 
@@ -202,85 +186,16 @@ db.wx_msg_type.createIndex({ type: 1 }, { unique: true })
 
 ---
 
-## 组织数据权限
-
-### 核心公式
-
-```text
-最终机构范围 = 用户数据权限机构
-              ∩
-              （业务传入机构 + 其所有子机构）   ← 业务未传机构时，仅按用户权限
-```
-
-由 `DataPermissionResolver` 计算，结果写入 `DataPermissionContext`，Mongo 条件为：
-
-```javascript
-{ organizationId: { $in: [最终机构ID...] } }
-```
-
-### 两个必实现接口
-
-| 接口 | 职责 |
-|------|------|
-| `OrganizationPermissionService` | 当前登录用户可访问的机构 ID 列表 |
-| `OrganizationHierarchyService` | 给定业务机构 ID，返回 **自身 + 全部子机构** ID |
-
-### 注解与业务机构入参
-
-```java
-// 方式1：@BizOrgId 标注参数（推荐）
-@DataPermission
-public List<Vo> query(@BizOrgId String organizationId, String wxId) { ... }
-
-// 方式2：按参数名（pom 已开启 -parameters）
-@DataPermission(bizOrgParam = "organizationId")
-public List<Vo> query(String organizationId) { ... }
-
-// 仅用户权限，不传业务机构
-@DataPermission
-public List<Vo> query() { ... }
-```
-
-| 注解属性 | 说明 |
-|----------|------|
-| `field` | 文档字段名，默认 `organizationId` |
-| `bizOrgParam` | 业务机构参数名 |
-| `includeBizChildren` | 是否展开子机构，默认 `true` |
-| `allowAllWhenEmpty` | 用户权限为空是否视为超管，默认 `true` |
-
-### 决策表（最终 Mongo 过滤）
-
-| 用户权限 | 业务机构参数 | 结果 |
-|----------|--------------|------|
-| 超管（空 + allowAll） | 未传 | **不过滤** |
-| 超管 | 传入 `org_A` | 仅 `org_A` 子树：`in (A, A1, A2...)` |
-| 普通用户 `[A,B]` | 未传 | `in (A, B)` |
-| 普通用户 `[A,B]` | 传入 `A`（子树 A,A1） | `in (A, A1)`（交集） |
-| 普通用户 `[A,B]` | 传入 `C` | **无权限**（交集为空，查不到数据） |
-
-### 生效范围
-
-| 操作类型 | 实现方式 |
-|----------|----------|
-| `find` / `count` / `remove` | `DataPermissionMongoTemplate` |
-| `aggregate` | `DataPermissionAggregation.prependOrgMatch` 或上述 Template |
-| bulk 写入 | `DataPermissionMongoBulkHelper` |
-
-### 写入校验
-
-批量写入前会 `assertWritable(dto.getOrganizationId())`，`organizationId` 必须在**最终交集**内。
-
----
-
 ## 批量写入
 
-### 推荐：四表事务写入
+### 推荐：四表事务写入（无数据权限）
 
 ```java
-@DataPermission
+@Autowired ReflectiveWxMsgBatchWriter wxMsgBatchWriter;
+
 public void saveBatch(List<WxMsgDTO> batch) {
-    // 建议每批 100～500 条，避免单事务过大
-    batchWriter.writeBatchInTransaction(batch);
+    // 建议每批 100～500 条
+    wxMsgBatchWriter.writeBatchInTransaction(batch);
 }
 ```
 
@@ -294,10 +209,8 @@ public void saveBatch(List<WxMsgDTO> batch) {
 ### 无事务（更快，无跨表原子性）
 
 ```java
-@Autowired
-WxMsgBatchWriter wxMsgBatchWriter;  // 无权限版
-
-wxMsgBatchWriter.writeBatchWithoutTransaction(batch);
+ReflectiveMongoBulkHelper bulk = ...;
+bulk.getMongoBulkHelper().bulkUpsert(...);  // 或拆表多次调用 bulkUpsertByEntity
 ```
 
 ### 不要使用（性能差）
@@ -317,74 +230,6 @@ for (WxMsgDTO m : list) {
 |------|----------|
 | 有 `@Transactional` / `executeInTransaction` | **ORDERED**（必须） |
 | 无事务、追求吞吐 | **UNORDERED** |
-
----
-
-## Aggregation 使用
-
-### 方式一：注入 `DataPermissionMongoTemplate`（推荐）
-
-```java
-@DataPermission
-public List<Vo> stat() {
-    Aggregation agg = Aggregation.newAggregation(
-            Aggregation.match(Criteria.where("status").is(1)),
-            Aggregation.group("wxId").count().as("cnt")
-    );
-    return mongoTemplate.aggregate(agg, "wx_msg_main", Vo.class).getMappedResults();
-}
-```
-
-等价于在管道最前增加：
-
-```json
-{ "$match": { "organizationId": { "$in": ["org_001", "org_002"] } } }
-```
-
-### 方式二：手动 prepend
-
-```java
-Aggregation withPerm = DataPermissionAggregation.prependOrgMatch(rawAgg);
-mongoTemplate.aggregate(withPerm, "wx_msg_main", Vo.class);
-```
-
-### 方式三：构建时合并条件（避免双重 $match）
-
-仅在使用**普通** `MongoTemplate` 时：
-
-```java
-Criteria c = DataPermissionAggregation.andOrg(Criteria.where("status").is(1));
-Aggregation agg = Aggregation.newAggregation(Aggregation.match(c), ...);
-```
-
-若已使用 `DataPermissionMongoTemplate`，不要再 `andOrg`，否则会重复过滤。
-
-### 方式四：原生 Document 管道
-
-```java
-List<Document> pipeline = List.of(
-        new Document("$match", new Document("status", 1)),
-        new Document("$group", ...)
-);
-List<Document> result = new DataPermissionAggregationExecutor(mongoTemplate)
-        .aggregateDocuments("wx_msg_main", pipeline);
-```
-
-### `$lookup` 子管道
-
-主集合会自动加权限；**关联集合**需在 `lookup.pipeline` 中自行添加：
-
-```java
-Aggregation.lookup()
-    .from("wx_msg_latest")
-    .localField("wxId")
-    .foreignField("wxId")
-    .pipeline(
-            Aggregation.match(DataPermissionCriteria.orgCriteria()),
-            Aggregation.limit(1)
-    )
-    .as("latest");
-```
 
 ---
 
@@ -409,26 +254,21 @@ public class WxMsgMain {
     private String wxId;   // 默认 INSERT_ONLY
 }
 
-/** 不存在插入 + 雪花 id；存在只更新 @UpsertOnUpdate；msgTime 更小不更新 */
-@UpsertEntity(
-    strategy = UpsertStrategy.UPSERT_SELECTIVE,
-    timeField = "msgTime",
-    generateIdOnInsert = true
-)
+/** 最常见：不存在插入，存在全量更新 */
+@UpsertEntity(strategy = UpsertStrategy.FULL_BY_KEY, generateIdOnInsert = true)
 public class WxMsgLatest {
     @Id private Long id;
     @UpsertKey private String wxId;
     @UpsertKey private String chatType;
     @UpsertKey private String talker;
-    @UpsertOnUpdate private String uniqueId;
-    @UpsertOnUpdate private LocalDateTime msgTime;
-    private LocalDateTime createTime;  // 无 @UpsertOnUpdate → 仅插入时写入
+    private String uniqueId;
+    private LocalDateTime msgTime;
 }
 ```
 
-### 存在时选择性更新 `@UpsertOnUpdate`
+### 存在时只更新部分字段（可选）
 
-配合 `UPSERT_SELECTIVE`：未标注字段仅在**不存在插入**时写入；标注字段在**存在更新**时 `set`。
+使用 `UPSERT_SELECTIVE` + `@UpsertOnUpdate`：未标注字段仅插入时写入。
 
 ### 字段级注解 `@UpsertField`（覆盖默认）
 
@@ -450,22 +290,18 @@ private String tempField;
 
 ```java
 @Autowired ReflectiveMongoBulkHelper reflectiveBulk;
+@Autowired ReflectiveWxMsgBatchWriter reflectiveWxWriter;
 
-@DataPermission
-public void saveOrders(@BizOrgId String orgId, List<Order> orders) {
+public void saveOrders(List<Order> orders) {
     reflectiveBulk.bulkUpsertByEntity(Order.class, orders, true);
 }
 
-// 微信四表（已封装）
-@Autowired ReflectiveWxMsgBatchWriter reflectiveWxWriter;
-
-@DataPermission
-public void save(@BizOrgId String organizationId, List<WxMsgDTO> list) {
+public void saveWx(List<WxMsgDTO> list) {
     reflectiveWxWriter.writeBatchInTransaction(list);
 }
 ```
 
-新增实体只需：**加注解 → `bulkUpsertByEntity`**，与数据权限、`@DataPermission` 自动兼容。
+新增实体：**`@UpsertEntity` + `@UpsertKey` → `bulkUpsertByEntity`**，无需数据权限注解。
 
 ---
 
@@ -474,21 +310,15 @@ public void save(@BizOrgId String organizationId, List<WxMsgDTO> list) {
 适用于非微信业务表（手写 Query/Update 的底层 API）。
 
 ```java
-@Autowired
-DataPermissionMongoBulkHelper bulkHelper;
+@Autowired MongoBulkHelper bulkHelper;
 
-@DataPermission
-public void saveOrders(List<OrderDTO> list) {
-    bulkHelper.bulkInsertOnly(
-            Order.class,
-            list,
-            o -> Query.query(Criteria.where("orderNo").is(o.getOrderNo())),
-            o -> new Update()
-                    .setOnInsert("orderNo", o.getOrderNo())
-                    .setOnInsert("organizationId", o.getOrganizationId()),
-            true  // 事务内 true
-    );
-}
+bulkHelper.bulkUpsert(
+        Order.class,
+        list,
+        o -> Query.query(Criteria.where("orderNo").is(o.getOrderNo())),
+        o -> new Update().set("name", o.getName()).setOnInsert("orderNo", o.getOrderNo()),
+        true
+);
 ```
 
 | 方法 | 用途 |
@@ -499,7 +329,7 @@ public void saveOrders(List<OrderDTO> list) {
 | `bulkInsertOnlyDistinct` | 去重后字典式插入 |
 | `executeInTransaction` | 多表顺序执行，失败回滚 |
 
-无权限场景使用 `MongoBulkHelper`（`com.bluebell.mongo.bulk`）。
+默认使用 `MongoBulkHelper` / `ReflectiveMongoBulkHelper`（`com.bluebell.mongo.bulk` / `upsert`）。
 
 ---
 
@@ -512,7 +342,7 @@ public void saveOrders(List<OrderDTO> list) {
 | 多线程 | 同一 `wxId+chatType+talker` 路由到同一线程，避免 latest 乱序 |
 | 连接池 | 4C 机器 `maxPoolSize` 约 20～30，不宜过大 |
 | 索引 | 写入前建好；事务中不建索引 |
-| 权限 | 优先 bulk + `@DataPermission`，避免循环 `findOne` |
+| 写入 | 优先 bulk upsert，避免循环 `findOne` |
 
 ---
 
@@ -533,8 +363,8 @@ A：确认 `msgTime` 正确；latest 表已用 `TimeForwardCriteria.timeForward`
 **Q：业务传了机构 ID 但仍查到别的机构数据？**  
 A：确认方法参数有 `@BizOrgId` 或 `bizOrgParam`；实现 `OrganizationHierarchyService`；编译开启 `-parameters`。
 
-**Q：如何接入现有工程？**  
-A：实现 `OrganizationPermissionService` + `OrganizationHierarchyService` → Service 方法加 `@DataPermission` 与 `@BizOrgId` → 使用 `DataPermissionMongoTemplate` / `DataPermissionWxMsgBatchWriter`。
+**Q：如何接入现有工程（只要批量）？**  
+A：`@Import(MongoUpsertConfig.class)` → 注入 `ReflectiveWxMsgBatchWriter` → `writeBatchInTransaction`，不要引入 `DataPermissionConfig`。
 
 ---
 
@@ -542,9 +372,12 @@ A：实现 `OrganizationPermissionService` + `OrganizationHierarchyService` → 
 
 | 类 | 职责 |
 |----|------|
+| `MongoUpsertConfig` | **默认** Bean：事务、`ReflectiveMongoBulkHelper`、`ReflectiveWxMsgBatchWriter` |
 | `MongoBulkHelper` | 通用 bulk upsert / 事务包装 |
-| `WxMsgBatchWriter` | 微信四表批量写（无权限版） |
-| `DataPermissionWxMsgBatchWriter` | 微信四表 + `organizationId` |
+| `ReflectiveWxMsgBatchWriter` | 微信四表反射批量写（**无权限**） |
+| `ReflectiveMongoBulkHelper` | 注解 + 反射 `bulkUpsertByEntity` |
+| `WxMsgBatchWriter` | 微信四表手写版（已 `@Deprecated` 配置） |
+| `DataPermissionWxMsgBatchWriter` | 可选：微信四表 + `organizationId` 校验 |
 | `DataPermission` | 权限注解 |
 | `DataPermissionAspect` | 注解 AOP |
 | `OrganizationPermissionService` | **业务实现**用户组织 ID 列表 |
@@ -560,10 +393,24 @@ A：实现 `OrganizationPermissionService` + `OrganizationHierarchyService` → 
 | `ReflectiveMongoBulkHelper` | 注解 + 反射通用 bulk |
 | `@UpsertEntity` / `@UpsertKey` | 实体 upsert 策略与业务键 |
 | `ReflectiveWxMsgBatchWriter` | 微信四表反射批量写 |
-| `MongoBulkConfig` | 事务管理器、Writer Bean |
-| `SnowflakeIdGenerator` | 最新消息表 `_id` 雪花 |
+| `MongoBulkConfig` | 已废弃，请用 `MongoUpsertConfig` |
+| `SnowflakeIdGenerator` | 插入时雪花 `_id` |
 
-示例代码：`permission.example.WxMsgServiceExample`、`AggregationServiceExample`。
+示例：`upsert.example.WxMsgPureServiceExample`（纯批量）。
+
+---
+
+## 可选：组织数据权限
+
+仅当业务需要按 `organizationId` 过滤查询/写入时，**额外** `@Import(DataPermissionConfig.class)`，并实现：
+
+| 接口 | 职责 |
+|------|------|
+| `OrganizationPermissionService` | 当前用户可访问机构 ID |
+| `OrganizationHierarchyService` | 业务机构 + 子机构 ID |
+
+Service 方法加 `@DataPermission`，写入用 `DataPermissionWxMsgBatchWriter`，查询用 `DataPermissionMongoTemplate`。  
+详见 `permission.example` 包。批量 upsert **不依赖**该模块。
 
 ---
 
