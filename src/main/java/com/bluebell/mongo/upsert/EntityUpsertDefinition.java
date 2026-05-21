@@ -36,7 +36,9 @@ public final class EntityUpsertDefinition {
         this.idField = ann.idField();
         this.generateIdOnInsert = ann.generateIdOnInsert();
 
-        if (strategy == UpsertStrategy.UPSERT_IF_NEWER && !StringUtils.hasText(timeField)) {
+        if ((strategy == UpsertStrategy.UPSERT_IF_NEWER || strategy == UpsertStrategy.UPSERT_SELECTIVE)
+                && StringUtils.hasText(timeField) == false
+                && strategy == UpsertStrategy.UPSERT_IF_NEWER) {
             throw new IllegalArgumentException("@UpsertEntity.timeField 必填: " + entityClass.getName());
         }
 
@@ -143,11 +145,14 @@ public final class EntityUpsertDefinition {
             if (f.isAnnotationPresent(UpsertKey.class)) {
                 return FieldUpsertMode.KEY;
             }
+            if (f.isAnnotationPresent(UpsertOnUpdate.class)) {
+                return FieldUpsertMode.ALWAYS;
+            }
             if (fieldAnn != null && fieldAnn.mode() != FieldUpsertMode.DEFAULT) {
                 return fieldAnn.mode();
             }
             return switch (strategy) {
-                case INSERT_ONLY -> FieldUpsertMode.INSERT_ONLY;
+                case INSERT_ONLY, UPSERT_SELECTIVE -> FieldUpsertMode.INSERT_ONLY;
                 case FULL_BY_KEY, UPSERT_IF_NEWER -> FieldUpsertMode.ALWAYS;
             };
         }

@@ -399,6 +399,7 @@ Aggregation.lookup()
 | `INSERT_ONLY` | 按业务键：不存在插入，存在忽略（字段默认 `setOnInsert`） |
 | `FULL_BY_KEY` | 按业务键：不存在插入，存在则**全量 set 更新** |
 | `UPSERT_IF_NEWER` | 按业务键 + `timeField`：仅时间向前才更新 |
+| `UPSERT_SELECTIVE` | 不存在：插入（`generateIdOnInsert` 可生成雪花 `_id`）；存在：仅更新 `@UpsertOnUpdate` 字段；可选 `timeField` 防旧盖新 |
 
 ```java
 @UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY)
@@ -408,8 +409,9 @@ public class WxMsgMain {
     private String wxId;   // 默认 INSERT_ONLY
 }
 
+/** 不存在插入 + 雪花 id；存在只更新 @UpsertOnUpdate；msgTime 更小不更新 */
 @UpsertEntity(
-    strategy = UpsertStrategy.UPSERT_IF_NEWER,
+    strategy = UpsertStrategy.UPSERT_SELECTIVE,
     timeField = "msgTime",
     generateIdOnInsert = true
 )
@@ -418,9 +420,15 @@ public class WxMsgLatest {
     @UpsertKey private String wxId;
     @UpsertKey private String chatType;
     @UpsertKey private String talker;
-    private LocalDateTime msgTime;  // 默认 ALWAYS
+    @UpsertOnUpdate private String uniqueId;
+    @UpsertOnUpdate private LocalDateTime msgTime;
+    private LocalDateTime createTime;  // 无 @UpsertOnUpdate → 仅插入时写入
 }
 ```
+
+### 存在时选择性更新 `@UpsertOnUpdate`
+
+配合 `UPSERT_SELECTIVE`：未标注字段仅在**不存在插入**时写入；标注字段在**存在更新**时 `set`。
 
 ### 字段级注解 `@UpsertField`（覆盖默认）
 

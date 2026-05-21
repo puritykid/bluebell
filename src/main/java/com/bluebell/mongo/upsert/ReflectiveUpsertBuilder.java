@@ -30,7 +30,7 @@ public final class ReflectiveUpsertBuilder {
         }
         Criteria criteria = new Criteria().andOperator(keyCriteria.toArray(new Criteria[0]));
 
-        if (def.strategy() == UpsertStrategy.UPSERT_IF_NEWER) {
+        if (needsTimeForward(def)) {
             Object newTime = readTimeValue(entity, def);
             criteria = criteria.andOperator(TimeForwardCriteria.timeForward(def.timeField(), newTime));
         }
@@ -57,7 +57,7 @@ public final class ReflectiveUpsertBuilder {
             }
             switch (field.mode()) {
                 case INSERT_ONLY -> update.setOnInsert(field.mongoName(), val);
-                case ALWAYS -> update.set(field.mongoName(), val);
+                case ALWAYS -> applyAlwaysField(update, def, field.mongoName(), val);
                 default -> { }
             }
         }
@@ -120,6 +120,24 @@ public final class ReflectiveUpsertBuilder {
             return f.get(entity);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             return readFieldByMongoName(entity, def, def.idField());
+        }
+    }
+
+    private static boolean needsTimeForward(EntityUpsertDefinition def) {
+        if (def.strategy() == UpsertStrategy.UPSERT_IF_NEWER) {
+            return true;
+        }
+        return def.strategy() == UpsertStrategy.UPSERT_SELECTIVE
+                && def.timeField() != null
+                && !def.timeField().isBlank();
+    }
+
+    /** 存在时 set；插入时 set + setOnInsert，保证新文档也有值 */
+    private static void applyAlwaysField(Update update, EntityUpsertDefinition def, String name, Object val) {
+        update.set(name, val);
+        if (def.strategy() == UpsertStrategy.INSERT_ONLY
+                || def.strategy() == UpsertStrategy.UPSERT_SELECTIVE) {
+            update.setOnInsert(name, val);
         }
     }
 

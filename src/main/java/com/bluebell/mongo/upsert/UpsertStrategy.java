@@ -12,5 +12,12 @@ public enum UpsertStrategy {
     FULL_BY_KEY,
 
     /** 按业务键 + 时间字段：仅当新记录时间更大（或相等）才更新，防旧盖新 */
-    UPSERT_IF_NEWER
+    UPSERT_IF_NEWER,
+
+    /**
+     * 不存在：插入（可雪花 _id），字段默认仅插入；
+     * 存在：仅更新标注了 {@link UpsertOnUpdate} 或 {@link UpsertField#mode()}{@code = ALWAYS} 的字段。
+     * 若配置了 {@link UpsertEntity#timeField()}，更新时同样防旧盖新。
+     */
+    UPSERT_SELECTIVE
 }
