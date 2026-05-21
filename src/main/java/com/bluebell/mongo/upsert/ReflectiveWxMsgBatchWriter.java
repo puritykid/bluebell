@@ -5,13 +5,12 @@ import com.bluebell.mongo.model.WxMsgDTO;
 import com.bluebell.mongo.model.WxMsgLatest;
 import com.bluebell.mongo.model.WxMsgMain;
 import com.bluebell.mongo.model.WxMsgType;
-import com.bluebell.mongo.permission.DataPermissionCriteria;
 import com.mongodb.bulk.BulkWriteResult;
 
 import java.util.List;
 
 /**
- * 微信四表批量写：基于实体注解 + 反射，无需手写 set 字段。
+ * 微信四表批量写：实体注解 + 反射（纯 bulk，不含数据权限）。
  */
 public class ReflectiveWxMsgBatchWriter {
 
@@ -22,7 +21,6 @@ public class ReflectiveWxMsgBatchWriter {
     }
 
     public void writeBatchInTransaction(List<WxMsgDTO> batch) {
-        batch.forEach(d -> DataPermissionCriteria.assertWritable(d.getOrganizationId()));
         reflectiveBulk.getMongoBulkHelper().executeInTransaction(
                 () -> writeMain(batch),
                 () -> writeLatest(batch),

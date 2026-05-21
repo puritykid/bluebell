@@ -1,20 +1,36 @@
 package com.bluebell.mongo.permission;
 
 import com.bluebell.mongo.bulk.MongoBulkHelper;
+import com.bluebell.mongo.support.SnowflakeIdGenerator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.mongodb.MongoDatabaseFactory;
 import org.springframework.data.mongodb.core.convert.MongoConverter;
 
+import com.bluebell.mongo.config.MongoUpsertConfig;
+import com.bluebell.mongo.permission.DataPermissionWxMsgBatchWriter;
+
+/**
+ * 数据权限模块（可选）。与 {@link MongoUpsertConfig} 分开引入。
+ */
 @Configuration
 @EnableAspectJAutoProxy
+@Import(MongoUpsertConfig.class)
 public class DataPermissionConfig {
 
     @Bean
     public DataPermissionMongoBulkHelper dataPermissionMongoBulkHelper(MongoBulkHelper mongoBulkHelper) {
         return new DataPermissionMongoBulkHelper(mongoBulkHelper);
+    }
+
+    @Bean
+    public DataPermissionWxMsgBatchWriter dataPermissionWxMsgBatchWriter(
+            DataPermissionMongoBulkHelper dataPermissionMongoBulkHelper,
+            SnowflakeIdGenerator snowflake) {
+        return new DataPermissionWxMsgBatchWriter(dataPermissionMongoBulkHelper, snowflake);
     }
 
     /**

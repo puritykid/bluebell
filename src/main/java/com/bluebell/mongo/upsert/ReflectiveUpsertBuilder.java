@@ -1,7 +1,6 @@
 package com.bluebell.mongo.upsert;
 
 import com.bluebell.mongo.bulk.TimeForwardCriteria;
-import com.bluebell.mongo.permission.DataPermissionCriteria;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
@@ -10,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 根据实体注解 + 反射构建 Query / Update。
+ * 根据实体注解 + 反射构建 Query / Update（纯批量工具，不含数据权限）。
  */
 public final class ReflectiveUpsertBuilder {
 
@@ -36,8 +35,7 @@ public final class ReflectiveUpsertBuilder {
             criteria = criteria.andOperator(TimeForwardCriteria.timeForward(def.timeField(), newTime));
         }
 
-        Query query = Query.query(criteria);
-        return DataPermissionCriteria.apply(query);
+        return Query.query(criteria);
     }
 
     public static Update buildUpdate(Object entity, EntityUpsertDefinition def, UpsertIdGenerator idGenerator) {
@@ -64,7 +62,7 @@ public final class ReflectiveUpsertBuilder {
             }
         }
 
-        return DataPermissionCriteria.applyInsertOrg(update);
+        return update;
     }
 
     private static Object readTimeValue(Object entity, EntityUpsertDefinition def) {
