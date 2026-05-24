@@ -8,8 +8,6 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
-import java.time.LocalDateTime;
-
 @Data
 @Document("wx_last_time")
 @UpsertEntity(
@@ -25,5 +23,5 @@ public class WxLastTime {
     private String wxId;
     @Indexed
     private String organizationId;
-    private LocalDateTime lastMsgTime;
+    private Long lastMsgTime;
 }

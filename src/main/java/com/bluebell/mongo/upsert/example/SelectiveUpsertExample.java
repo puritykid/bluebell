@@ -7,8 +7,6 @@ import com.bluebell.mongo.upsert.UpsertStrategy;
 import lombok.Data;
 import org.springframework.data.annotation.Id;
 
-import java.time.LocalDateTime;
-
 /**
  * 示例：不存在新增（雪花 id），存在只更新指定字段。
  */
@@ -24,11 +22,11 @@ public class SelectiveUpsertExample {
 
     /** 仅首次插入写入 */
     private String createBy;
-    private LocalDateTime createTime;
+    private Long createTime;
 
     /** 存在时也会更新 */
     @UpsertOnUpdate
     private String status;
     @UpsertOnUpdate
-    private LocalDateTime updateTime;
+    private Long updateTime;
 }

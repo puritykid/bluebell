@@ -174,7 +174,7 @@ src/main/java/com/bluebell/mongo/
 | `talker` | 对方 ID |
 | `type` | 消息类型（字典） |
 | `content` | 内容 |
-| `msgTime` | 消息时间（用于比「新/旧」） |
+| `msgTime` | 消息时间，**epoch 毫秒（long）**，与库内 BSON 类型一致 |
 
 ### 集合与写入语义
 
@@ -421,8 +421,8 @@ public class WxMsgLatest {
     @UpsertKey private String chatType;
     @UpsertKey private String talker;
     @UpsertOnUpdate private String uniqueId;
-    @UpsertOnUpdate private LocalDateTime msgTime;
-    private LocalDateTime createTime;  // 无 @UpsertOnUpdate → 仅插入时写入
+    @UpsertOnUpdate private Long msgTime;      // epoch 毫秒
+    private Long createTime;
 }
 ```
 

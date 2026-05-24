@@ -9,8 +9,6 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 
-import java.time.LocalDateTime;
-
 /**
  * 不存在：插入（雪花 _id）；
  * 存在：仅更新 @UpsertOnUpdate 字段；msgTime 更小则不更新。
@@ -41,5 +39,5 @@ public class WxMsgLatest {
     @UpsertOnUpdate
     private Object content;
     @UpsertOnUpdate
-    private LocalDateTime msgTime;
+    private Long msgTime;
 }

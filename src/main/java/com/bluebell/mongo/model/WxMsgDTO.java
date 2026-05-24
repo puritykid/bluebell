@@ -2,8 +2,6 @@ package com.bluebell.mongo.model;
 
 import lombok.Data;
 
-import java.time.LocalDateTime;
-
 @Data
 public class WxMsgDTO {
     private String organizationId;
@@ -13,5 +11,6 @@ public class WxMsgDTO {
     private String talker;
     private String type;
     private Object content;
-    private LocalDateTime msgTime;
+    /** epoch 毫秒，与 MongoDB 中 long 一致 */
+    private Long msgTime;
 }

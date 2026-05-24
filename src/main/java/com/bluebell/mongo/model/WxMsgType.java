@@ -10,8 +10,6 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
-import java.time.LocalDateTime;
-
 @Data
 @Document("wx_msg_type")
 @UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY, generateIdOnInsert = true)
@@ -22,5 +20,5 @@ public class WxMsgType {
     @Indexed(unique = true)
     private String type;
     @UpsertField(mode = FieldUpsertMode.INSERT_ONLY)
-    private LocalDateTime createTime;
+    private Long createTime;
 }

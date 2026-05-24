@@ -5,13 +5,13 @@ import com.bluebell.mongo.model.WxMsgLatest;
 import com.bluebell.mongo.model.WxMsgMain;
 import com.bluebell.mongo.model.WxMsgType;
 import com.bluebell.mongo.model.WxMsgDTO;
+import com.bluebell.mongo.support.EpochTimeUtils;
 import com.bluebell.mongo.support.SnowflakeIdGenerator;
 import com.mongodb.bulk.BulkWriteResult;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 
-import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -85,7 +85,7 @@ public class WxMsgBatchWriter {
      * wxId 维度合并为一次 bulk（避免每个 wxId 单独 execute）。
      */
     public BulkWriteResult writeWxLastTimeBulk(List<WxMsgDTO> batch) {
-        Map<String, LocalDateTime> maxByWx = batch.stream()
+        Map<String, Long> maxByWx = batch.stream()
                 .collect(Collectors.groupingBy(
                         WxMsgDTO::getWxId,
                         Collectors.collectingAndThen(
@@ -94,7 +94,7 @@ public class WxMsgBatchWriter {
                         )
                 ));
 
-        record WxTimeItem(String wxId, LocalDateTime maxTime) {
+        record WxTimeItem(String wxId, Long maxTime) {
         }
         List<WxTimeItem> items = maxByWx.entrySet().stream()
                 .filter(e -> e.getKey() != null && e.getValue() != null)
@@ -118,7 +118,7 @@ public class WxMsgBatchWriter {
                 type -> Query.query(Criteria.where("type").is(type)),
                 type -> new Update()
                         .setOnInsert("type", type)
-                        .setOnInsert("createTime", LocalDateTime.now()),
+                        .setOnInsert("createTime", EpochTimeUtils.currentTimeMillis()),
                 inTransaction()
         );
     }
@@ -163,14 +163,14 @@ public class WxMsgBatchWriter {
                 .set("msgTime", m.getMsgTime());
     }
 
-    private Query buildWxTimeQuery(String wxId, LocalDateTime maxTime) {
+    private Query buildWxTimeQuery(String wxId, Long maxTime) {
         return Query.query(
                 Criteria.where("wxId").is(wxId)
                         .andOperator(TimeForwardCriteria.timeForwardStrict("lastMsgTime", maxTime))
         );
     }
 
-    private Update buildWxTimeUpdate(String wxId, LocalDateTime maxTime) {
+    private Update buildWxTimeUpdate(String wxId, Long maxTime) {
         return new Update()
                 .set("lastMsgTime", maxTime)
                 .setOnInsert("wxId", wxId);

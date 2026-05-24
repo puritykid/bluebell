@@ -8,8 +8,6 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
-import java.time.LocalDateTime;
-
 @Data
 @Document("wx_msg_main")
 @UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY, generateIdOnInsert = true)
@@ -26,5 +24,5 @@ public class WxMsgMain {
     private String talker;
     private String type;
     private Object content;
-    private LocalDateTime msgTime;
+    private Long msgTime;
 }

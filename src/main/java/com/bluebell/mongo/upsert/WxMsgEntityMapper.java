@@ -1,6 +1,7 @@
 package com.bluebell.mongo.upsert;
 
 import com.bluebell.mongo.model.*;
+import com.bluebell.mongo.support.EpochTimeUtils;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -53,7 +54,7 @@ public final class WxMsgEntityMapper {
                 .map(type -> {
                     WxMsgType e = new WxMsgType();
                     e.setType(type);
-                    e.setCreateTime(java.time.LocalDateTime.now());
+                    e.setCreateTime(EpochTimeUtils.currentTimeMillis());
                     return e;
                 })
                 .toList();
@@ -76,6 +77,9 @@ public final class WxMsgEntityMapper {
                 if (val == null) {
                     continue;
                 }
+                if (isTimeField(df.getName())) {
+                    val = EpochTimeUtils.normalizeToMillis(val);
+                }
                 try {
                     var tf = to.getClass().getDeclaredField(df.getName());
                     tf.setAccessible(true);
@@ -86,5 +90,9 @@ public final class WxMsgEntityMapper {
                 throw new IllegalStateException(e);
             }
         }
+    }
+
+    private static boolean isTimeField(String name) {
+        return "msgTime".equals(name) || "lastMsgTime".equals(name) || "createTime".equals(name);
     }
 }
