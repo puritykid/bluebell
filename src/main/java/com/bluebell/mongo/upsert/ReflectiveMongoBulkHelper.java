@@ -37,6 +37,9 @@ public class ReflectiveMongoBulkHelper {
         BulkOperations bulk = mongoBulkHelper.getMongoTemplate().bulkOps(mode, entityClass);
 
         for (E entity : entities) {
+            if (ReflectiveUpsertBuilder.shouldSkipWrite(entity, def)) {
+                continue;
+            }
             ReflectiveUpsertBuilder.QueryUpdate qu = ReflectiveUpsertBuilder.build(entity, def, idGenerator);
             bulk.upsert(qu.query(), qu.update());
         }

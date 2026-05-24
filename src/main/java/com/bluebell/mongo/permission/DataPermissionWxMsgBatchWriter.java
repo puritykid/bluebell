@@ -5,6 +5,7 @@ import com.bluebell.mongo.bulk.TimeForwardCriteria;
 import com.bluebell.mongo.bulk.UpsertSpec;
 import com.bluebell.mongo.model.*;
 import com.bluebell.mongo.support.EpochTimeUtils;
+import com.bluebell.mongo.upsert.ReflectiveWxMsgBatchWriter;
 import com.bluebell.mongo.support.SnowflakeIdGenerator;
 import com.mongodb.bulk.BulkWriteResult;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -31,30 +32,32 @@ public class DataPermissionWxMsgBatchWriter {
     }
 
     public void writeBatchInTransaction(List<WxMsgDTO> batch) {
-        batch.forEach(m -> DataPermissionCriteria.assertWritable(m.getOrganizationId()));
+        List<WxMsgDTO> writable = ReflectiveWxMsgBatchWriter.filterWritable(batch);
+        writable.forEach(m -> DataPermissionCriteria.assertWritable(m.getOrganizationId()));
         bulkHelper.executeInTransaction(
-                () -> writeMain(batch),
-                () -> writeLatest(batch),
-                () -> writeWxLastTimeBulk(batch),
-                () -> writeMsgTypeDict(batch)
+                () -> writeMain(writable),
+                () -> writeLatest(writable),
+                () -> writeWxLastTimeBulk(writable),
+                () -> writeMsgTypeDict(writable)
         );
     }
 
     public BulkWriteResult writeMain(List<WxMsgDTO> batch) {
-        return bulkHelper.bulkInsertOnly(WxMsgMain.class, batch,
+        return bulkHelper.bulkInsertOnly(WxMsgMain.class, ReflectiveWxMsgBatchWriter.filterWritable(batch),
                 m -> Query.query(Criteria.where("uniqueId").is(m.getUniqueId())),
                 this::buildMainInsertOnlyUpdate, inTransaction());
     }
 
     public BulkWriteResult writeLatest(List<WxMsgDTO> batch) {
-        return bulkHelper.bulkUpsertMerged(WxMsgLatest.class, batch,
+        return bulkHelper.bulkUpsertMerged(WxMsgLatest.class, ReflectiveWxMsgBatchWriter.filterWritable(batch),
                 this::sessionKey, MergeUtils.keepNewer(WxMsgDTO::getMsgTime),
                 UpsertSpec.of(this::buildLatestQuery, this::buildLatestUpdate), inTransaction());
     }
 
     public BulkWriteResult writeWxLastTimeBulk(List<WxMsgDTO> batch) {
+        List<WxMsgDTO> writable = ReflectiveWxMsgBatchWriter.filterWritable(batch);
         record WxTimeItem(String wxId, String organizationId, Long maxTime) {}
-        Map<String, WxTimeItem> maxByWxOrg = batch.stream()
+        Map<String, WxTimeItem> maxByWxOrg = writable.stream()
                 .filter(m -> m.getWxId() != null && m.getMsgTime() != null)
                 .collect(Collectors.toMap(
                         m -> m.getWxId() + "|" + m.getOrganizationId(),
@@ -70,7 +73,8 @@ public class DataPermissionWxMsgBatchWriter {
     }
 
     public BulkWriteResult writeMsgTypeDict(List<WxMsgDTO> batch) {
-        return bulkHelper.bulkInsertOnlyDistinct(WxMsgType.class, batch, WxMsgDTO::getType,
+        return bulkHelper.bulkInsertOnlyDistinct(WxMsgType.class,
+                ReflectiveWxMsgBatchWriter.filterWritable(batch), WxMsgDTO::getType,
                 type -> Query.query(Criteria.where("type").is(type)),
                 type -> new Update().setOnInsert("type", type)
                         .setOnInsert("createTime", EpochTimeUtils.currentTimeMillis()),
@@ -98,10 +102,13 @@ public class DataPermissionWxMsgBatchWriter {
     }
 
     private Query buildLatestQuery(WxMsgDTO m) {
-        return Query.query(Criteria.where("wxId").is(m.getWxId())
+        Criteria session = Criteria.where("wxId").is(m.getWxId())
                 .and("chatType").is(m.getChatType())
-                .and("talker").is(m.getTalker())
-                .andOperator(TimeForwardCriteria.timeForward("msgTime", m.getMsgTime())));
+                .and("talker").is(m.getTalker());
+        if (m.getMsgTime() != null) {
+            session = session.andOperator(TimeForwardCriteria.timeForward("msgTime", m.getMsgTime()));
+        }
+        return Query.query(session);
     }
 
     private Update buildLatestUpdate(WxMsgDTO m) {

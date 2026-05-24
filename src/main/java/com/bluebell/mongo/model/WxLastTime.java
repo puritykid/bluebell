@@ -13,6 +13,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 @UpsertEntity(
         strategy = UpsertStrategy.UPSERT_IF_NEWER,
         timeField = "lastMsgTime",
+        rejectFutureTime = true,
         generateIdOnInsert = true
 )
 public class WxLastTime {

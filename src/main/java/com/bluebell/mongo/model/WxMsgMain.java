@@ -10,7 +10,12 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 @Data
 @Document("wx_msg_main")
-@UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY, generateIdOnInsert = true)
+@UpsertEntity(
+        strategy = UpsertStrategy.INSERT_ONLY,
+        timeField = "msgTime",
+        rejectFutureTime = true,
+        generateIdOnInsert = true
+)
 public class WxMsgMain {
     @Id
     private Long id;

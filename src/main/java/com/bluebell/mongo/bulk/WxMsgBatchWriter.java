@@ -60,10 +60,18 @@ public class WxMsgBatchWriter {
         writeMsgTypeDict(batch);
     }
 
+    private List<WxMsgDTO> filterWritable(List<WxMsgDTO> batch) {
+        if (batch == null || batch.isEmpty()) {
+            return List.of();
+        }
+        return batch.stream().filter(d -> EpochTimeUtils.isWritable(d.getMsgTime())).toList();
+    }
+
     public BulkWriteResult writeMain(List<WxMsgDTO> batch) {
+        List<WxMsgDTO> writable = filterWritable(batch);
         return bulkHelper.bulkInsertOnly(
                 WxMsgMain.class,
-                batch,
+                writable,
                 m -> Query.query(Criteria.where("uniqueId").is(m.getUniqueId())),
                 this::buildMainInsertOnlyUpdate,
                 inTransaction()
@@ -71,9 +79,10 @@ public class WxMsgBatchWriter {
     }
 
     public BulkWriteResult writeLatest(List<WxMsgDTO> batch) {
+        List<WxMsgDTO> writable = filterWritable(batch);
         return bulkHelper.bulkUpsertMerged(
                 WxMsgLatest.class,
-                batch,
+                writable,
                 this::sessionKey,
                 MergeUtils.keepNewer(WxMsgDTO::getMsgTime),
                 UpsertSpec.of(this::buildLatestQuery, this::buildLatestUpdate),
@@ -85,7 +94,8 @@ public class WxMsgBatchWriter {
      * wxId 维度合并为一次 bulk（避免每个 wxId 单独 execute）。
      */
     public BulkWriteResult writeWxLastTimeBulk(List<WxMsgDTO> batch) {
-        Map<String, Long> maxByWx = batch.stream()
+        List<WxMsgDTO> writable = filterWritable(batch);
+        Map<String, Long> maxByWx = writable.stream()
                 .collect(Collectors.groupingBy(
                         WxMsgDTO::getWxId,
                         Collectors.collectingAndThen(
@@ -113,7 +123,7 @@ public class WxMsgBatchWriter {
     public BulkWriteResult writeMsgTypeDict(List<WxMsgDTO> batch) {
         return bulkHelper.bulkInsertOnlyDistinct(
                 WxMsgType.class,
-                batch,
+                filterWritable(batch),
                 WxMsgDTO::getType,
                 type -> Query.query(Criteria.where("type").is(type)),
                 type -> new Update()
@@ -143,12 +153,13 @@ public class WxMsgBatchWriter {
     }
 
     private Query buildLatestQuery(WxMsgDTO m) {
-        return Query.query(
-                Criteria.where("wxId").is(m.getWxId())
-                        .and("chatType").is(m.getChatType())
-                        .and("talker").is(m.getTalker())
-                        .andOperator(TimeForwardCriteria.timeForward("msgTime", m.getMsgTime()))
-        );
+        Criteria session = Criteria.where("wxId").is(m.getWxId())
+                .and("chatType").is(m.getChatType())
+                .and("talker").is(m.getTalker());
+        if (m.getMsgTime() != null) {
+            session = session.andOperator(TimeForwardCriteria.timeForward("msgTime", m.getMsgTime()));
+        }
+        return Query.query(session);
     }
 
     private Update buildLatestUpdate(WxMsgDTO m) {

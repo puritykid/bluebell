@@ -19,6 +19,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 @UpsertEntity(
         strategy = UpsertStrategy.UPSERT_SELECTIVE,
         timeField = "msgTime",
+        rejectFutureTime = true,
         generateIdOnInsert = true
 )
 public class WxMsgLatest {

@@ -17,6 +17,18 @@ public final class EpochTimeUtils {
         return System.currentTimeMillis();
     }
 
+    /** 是否晚于当前时刻（毫秒）；null 视为否 */
+    public static boolean isFuture(Long epochMillis) {
+        return epochMillis != null && epochMillis > currentTimeMillis();
+    }
+
+    /**
+     * 是否允许写入：时间为 null 或 ≤ 当前时刻；未来时间不写库。
+     */
+    public static boolean isWritable(Long epochMillis) {
+        return !isFuture(epochMillis);
+    }
+
     /**
      * 入库前规范化：已是 Long 则原样返回；兼容接入层仍传 LocalDateTime/Date 的情况。
      */

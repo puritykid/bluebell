@@ -174,14 +174,14 @@ src/main/java/com/bluebell/mongo/
 | `talker` | 对方 ID |
 | `type` | 消息类型（字典） |
 | `content` | 内容 |
-| `msgTime` | 消息时间，**epoch 毫秒（long）**，与库内 BSON 类型一致 |
+| `msgTime` | 消息时间，**epoch 毫秒（long）**；`null` 可写；**大于当前时间不 insert/update** |
 
 ### 集合与写入语义
 
 | 集合 | 文档名 | 业务键 | 写入规则 |
 |------|--------|--------|----------|
 | 主表 | `wx_msg_main` | `uniqueId` | **仅插入**：已存在则忽略（`setOnInsert`） |
-| 最新消息 | `wx_msg_latest` | `wxId + chatType + talker` | **不存在插入**（雪花 `_id`），**存在则更新**；仅当 `msgTime` ≥ 库中才更新 |
+| 最新消息 | `wx_msg_latest` | `wxId + chatType + talker` | 按业务键 upsert；`msgTime` 为 null 仍写；未来时间跳过；存在时仅 `msgTime` ≥ 库中才更新 |
 | 微信更新时间 | `wx_last_time` | `wxId` | 本批取 `max(msgTime)`，仅向前推进 `lastMsgTime` |
 | 消息类型字典 | `wx_msg_type` | `type`（全局） | **仅插入**：新类型入库，已存在不改动 |
 
@@ -400,6 +400,7 @@ Aggregation.lookup()
 | `FULL_BY_KEY` | 按业务键：不存在插入，存在则**全量 set 更新** |
 | `UPSERT_IF_NEWER` | 按业务键 + `timeField`：仅时间向前才更新 |
 | `UPSERT_SELECTIVE` | 不存在：插入（`generateIdOnInsert` 可生成雪花 `_id`）；存在：仅更新 `@UpsertOnUpdate` 字段；可选 `timeField` 防旧盖新 |
+| `rejectFutureTime` | 实体注解属性：`timeField` &gt; 当前时间不 insert/update；`timeField` 为 null 仍按业务键 upsert |
 
 ```java
 @UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY)

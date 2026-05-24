@@ -22,6 +22,7 @@ public final class EntityUpsertDefinition {
     private final String timeField;
     private final String idField;
     private final boolean generateIdOnInsert;
+    private final boolean rejectFutureTime;
     private final List<FieldMeta> keyFields;
     private final List<FieldMeta> payloadFields;
 
@@ -35,6 +36,11 @@ public final class EntityUpsertDefinition {
         this.timeField = ann.timeField();
         this.idField = ann.idField();
         this.generateIdOnInsert = ann.generateIdOnInsert();
+        this.rejectFutureTime = ann.rejectFutureTime();
+        if (rejectFutureTime && !StringUtils.hasText(timeField)) {
+            throw new IllegalArgumentException(
+                    "rejectFutureTime=true 时必须配置 timeField: " + entityClass.getName());
+        }
 
         if ((strategy == UpsertStrategy.UPSERT_IF_NEWER || strategy == UpsertStrategy.UPSERT_SELECTIVE)
                 && StringUtils.hasText(timeField) == false
@@ -96,6 +102,10 @@ public final class EntityUpsertDefinition {
 
     public boolean generateIdOnInsert() {
         return generateIdOnInsert;
+    }
+
+    public boolean rejectFutureTime() {
+        return rejectFutureTime;
     }
 
     public List<FieldMeta> keyFields() {

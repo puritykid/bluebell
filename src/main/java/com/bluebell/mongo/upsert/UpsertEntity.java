@@ -29,4 +29,9 @@ public @interface UpsertEntity {
 
     /** 是否在 insert 时自动生成雪花主键（需配合 {@link UpsertIdGenerator}） */
     boolean generateIdOnInsert() default true;
+
+    /**
+     * 为 true 且配置了 {@link #timeField()} 时：该时间 &gt; 当前时刻则跳过本条 bulk（不 insert、不 update）。
+     */
+    boolean rejectFutureTime() default false;
 }

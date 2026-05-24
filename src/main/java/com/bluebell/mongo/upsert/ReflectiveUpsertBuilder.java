@@ -1,6 +1,7 @@
 package com.bluebell.mongo.upsert;
 
 import com.bluebell.mongo.bulk.TimeForwardCriteria;
+import com.bluebell.mongo.support.EpochTimeUtils;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
@@ -22,6 +23,18 @@ public final class ReflectiveUpsertBuilder {
         return new QueryUpdate(query, update);
     }
 
+    /**
+     * 未来时间等规则下是否跳过本条（不 insert、不 update）。
+     */
+    public static boolean shouldSkipWrite(Object entity, EntityUpsertDefinition def) {
+        if (!def.rejectFutureTime()) {
+            return false;
+        }
+        Object raw = readTimeValue(entity, def);
+        Long millis = EpochTimeUtils.normalizeToMillis(raw);
+        return EpochTimeUtils.isFuture(millis);
+    }
+
     public static Query buildQuery(Object entity, EntityUpsertDefinition def) {
         List<Criteria> keyCriteria = new ArrayList<>();
         for (EntityUpsertDefinition.FieldMeta key : def.keyFields()) {
@@ -32,7 +45,10 @@ public final class ReflectiveUpsertBuilder {
 
         if (needsTimeForward(def)) {
             Object newTime = readTimeValue(entity, def);
-            criteria = criteria.andOperator(TimeForwardCriteria.timeForward(def.timeField(), newTime));
+            // 时间为 null：仅按业务键 upsert，不做「只向前」限制
+            if (newTime != null) {
+                criteria = criteria.andOperator(TimeForwardCriteria.timeForward(def.timeField(), newTime));
+            }
         }
 
         return Query.query(criteria);
