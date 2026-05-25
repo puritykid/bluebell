@@ -447,26 +447,28 @@ private String tempField;
 
 也可用 `@UpsertEntity(keys = {"orderNo"})` 代替多个 `@UpsertKey`。
 
-### 调用
+### 三种批量模式
+
+| 方法 | 模式 | 行为 |
+|------|------|------|
+| `bulkInsertByEntity` | `INSERT_ONLY` | **批量新增**：按 `@UpsertKey` 不存在才插入，已存在忽略 |
+| `bulkUpdateByEntity` | `UPDATE_ONLY` | **批量修改**：只 `update`，无匹配不插入；仅更新 `ALWAYS` / `@UpsertOnUpdate` 字段 |
+| `bulkUpsertByEntity` | `UPSERT` | **不存在插入、存在修改**：由实体 `UpsertStrategy` 决定更新范围 |
 
 ```java
 @Autowired ReflectiveMongoBulkHelper reflectiveBulk;
 
-@DataPermission
-public void saveOrders(@BizOrgId String orgId, List<Order> orders) {
-    reflectiveBulk.bulkUpsertByEntity(Order.class, orders, true);
-}
+reflectiveBulk.bulkInsertByEntity(WxMsgMain.class, mainList, true);
+reflectiveBulk.bulkUpdateByEntity(WxMsgLatest.class, latestList, true);
+reflectiveBulk.bulkUpsertByEntity(WxMsgLatest.class, latestList, true);
 
-// 微信四表（已封装）
-@Autowired ReflectiveWxMsgBatchWriter reflectiveWxWriter;
-
-@DataPermission
-public void save(@BizOrgId String organizationId, List<WxMsgDTO> list) {
-    reflectiveWxWriter.writeBatchInTransaction(list);
-}
+// 或显式模式
+reflectiveBulk.bulkByEntity(Order.class, orders, BulkWriteMode.UPSERT, true);
 ```
 
-新增实体只需：**加注解 → `bulkUpsertByEntity`**，与数据权限、`@DataPermission` 自动兼容。
+微信四表：`ReflectiveWxMsgBatchWriter.writeBatchInTransaction(dtoList)`（内部主表 insert、latest upsert 等）。
+
+实体需 **`@UpsertEntity` + `@UpsertKey`**；`rejectFutureTime` 三种模式均生效。
 
 ---
 
