@@ -87,6 +87,29 @@ public class MongoBulkHelper {
     }
 
     /**
+     * 批量 update：仅更新已存在文档，无匹配则不插入。
+     */
+    public <S, E> BulkWriteResult bulkUpdate(
+            Class<E> entityClass,
+            List<S> source,
+            Function<S, Query> queryFn,
+            Function<S, Update> updateFn,
+            boolean ordered
+    ) {
+        if (source == null || source.isEmpty()) {
+            return null;
+        }
+        BulkOperations.BulkMode mode = ordered
+                ? BulkOperations.BulkMode.ORDERED
+                : BulkOperations.BulkMode.UNORDERED;
+        BulkOperations bulk = mongoTemplate.bulkOps(mode, entityClass);
+        for (S item : source) {
+            bulk.update(queryFn.apply(item), updateFn.apply(item));
+        }
+        return bulk.execute();
+    }
+
+    /**
      * 仅插入：已存在则忽略（Update 只含 setOnInsert，不要 set）。
      */
     public <S, E> BulkWriteResult bulkInsertOnly(

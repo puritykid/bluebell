@@ -495,7 +495,9 @@ public void saveOrders(List<OrderDTO> list) {
 | 方法 | 用途 |
 |------|------|
 | `bulkUpsert` | 存在更新，不存在插入 |
+| `bulkUpdate` | 仅 update，不存在不插入 |
 | `bulkInsertOnly` | 仅 `setOnInsert`，存在忽略 |
+| `BulkWriteMode` | 反射工具三种模式枚举 |
 | `bulkUpsertMerged` | 批内按键合并后再 upsert |
 | `bulkInsertOnlyDistinct` | 去重后字典式插入 |
 | `executeInTransaction` | 多表顺序执行，失败回滚 |

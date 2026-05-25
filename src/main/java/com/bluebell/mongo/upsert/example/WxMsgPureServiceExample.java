@@ -23,9 +23,21 @@ public class WxMsgPureServiceExample {
         wxMsgBatchWriter.writeBatchInTransaction(list);
     }
 
-    /** 单表通用写法 */
-    public void saveMainOnly(List<com.bluebell.mongo.model.WxMsgMain> mainList) {
-        reflectiveMongoBulkHelper.bulkUpsertByEntity(
+    /** 批量新增：uniqueId 已存在则忽略 */
+    public void insertMainOnly(List<com.bluebell.mongo.model.WxMsgMain> mainList) {
+        reflectiveMongoBulkHelper.bulkInsertByEntity(
                 com.bluebell.mongo.model.WxMsgMain.class, mainList, false);
+    }
+
+    /** 批量修改：仅更新已存在文档 */
+    public void updateLatestOnly(List<com.bluebell.mongo.model.WxMsgLatest> list) {
+        reflectiveMongoBulkHelper.bulkUpdateByEntity(
+                com.bluebell.mongo.model.WxMsgLatest.class, list, false);
+    }
+
+    /** 批量 upsert：不存在插入、存在修改 */
+    public void upsertLatest(List<com.bluebell.mongo.model.WxMsgLatest> list) {
+        reflectiveMongoBulkHelper.bulkUpsertByEntity(
+                com.bluebell.mongo.model.WxMsgLatest.class, list, false);
     }
 }

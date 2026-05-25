@@ -1,7 +1,9 @@
 package com.bluebell.mongo.upsert;
 
+import com.bluebell.mongo.bulk.BulkWriteMode;
 import com.bluebell.mongo.bulk.TimeForwardCriteria;
 import com.bluebell.mongo.support.EpochTimeUtils;
+import org.springframework.util.StringUtils;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
@@ -18,9 +20,19 @@ public final class ReflectiveUpsertBuilder {
     }
 
     public static QueryUpdate build(Object entity, EntityUpsertDefinition def, UpsertIdGenerator idGenerator) {
-        Query query = buildQuery(entity, def);
-        Update update = buildUpdate(entity, def, idGenerator);
-        return new QueryUpdate(query, update);
+        return build(entity, def, idGenerator, BulkWriteMode.UPSERT);
+    }
+
+    public static QueryUpdate build(
+            Object entity,
+            EntityUpsertDefinition def,
+            UpsertIdGenerator idGenerator,
+            BulkWriteMode writeMode
+    ) {
+        return new QueryUpdate(
+                buildQuery(entity, def, writeMode),
+                buildUpdate(entity, def, idGenerator, writeMode)
+        );
     }
 
     /**
@@ -36,6 +48,10 @@ public final class ReflectiveUpsertBuilder {
     }
 
     public static Query buildQuery(Object entity, EntityUpsertDefinition def) {
+        return buildQuery(entity, def, BulkWriteMode.UPSERT);
+    }
+
+    public static Query buildQuery(Object entity, EntityUpsertDefinition def, BulkWriteMode writeMode) {
         List<Criteria> keyCriteria = new ArrayList<>();
         for (EntityUpsertDefinition.FieldMeta key : def.keyFields()) {
             Object val = key.read(entity);
@@ -43,9 +59,8 @@ public final class ReflectiveUpsertBuilder {
         }
         Criteria criteria = new Criteria().andOperator(keyCriteria.toArray(new Criteria[0]));
 
-        if (needsTimeForward(def)) {
+        if (needsTimeForward(def, writeMode)) {
             Object newTime = readTimeValue(entity, def);
-            // 时间为 null：仅按业务键 upsert，不做「只向前」限制
             if (newTime != null) {
                 criteria = criteria.andOperator(TimeForwardCriteria.timeForward(def.timeField(), newTime));
             }
@@ -55,17 +70,74 @@ public final class ReflectiveUpsertBuilder {
     }
 
     public static Update buildUpdate(Object entity, EntityUpsertDefinition def, UpsertIdGenerator idGenerator) {
-        Update update = new Update();
+        return buildUpdate(entity, def, idGenerator, BulkWriteMode.UPSERT);
+    }
 
+    public static Update buildUpdate(
+            Object entity,
+            EntityUpsertDefinition def,
+            UpsertIdGenerator idGenerator,
+            BulkWriteMode writeMode
+    ) {
+        return switch (writeMode) {
+            case INSERT_ONLY -> buildInsertOnlyUpdate(entity, def, idGenerator);
+            case UPDATE_ONLY -> buildUpdateOnlyUpdate(entity, def);
+            case UPSERT -> buildUpsertUpdate(entity, def, idGenerator);
+        };
+    }
+
+    /** 批量新增：仅 setOnInsert */
+    private static Update buildInsertOnlyUpdate(
+            Object entity,
+            EntityUpsertDefinition def,
+            UpsertIdGenerator idGenerator
+    ) {
+        Update update = new Update();
         if (def.generateIdOnInsert() && idGenerator != null && isIdEmpty(entity, def)) {
             update.setOnInsert(def.idField(), idGenerator.nextId(def.entityClass()));
         }
-
         for (EntityUpsertDefinition.FieldMeta key : def.keyFields()) {
-            Object val = key.read(entity);
-            update.setOnInsert(key.mongoName(), val);
+            update.setOnInsert(key.mongoName(), key.read(entity));
         }
+        for (EntityUpsertDefinition.FieldMeta field : def.payloadFields()) {
+            Object val = field.read(entity);
+            if (val == null && field.mode() != FieldUpsertMode.ALWAYS) {
+                continue;
+            }
+            update.setOnInsert(field.mongoName(), val);
+        }
+        return update;
+    }
 
+    /** 批量修改：仅 set，不存在则不插入 */
+    private static Update buildUpdateOnlyUpdate(Object entity, EntityUpsertDefinition def) {
+        Update update = new Update();
+        for (EntityUpsertDefinition.FieldMeta field : def.payloadFields()) {
+            if (!isFieldWritableOnUpdate(field)) {
+                continue;
+            }
+            Object val = field.read(entity);
+            if (val == null && field.mode() != FieldUpsertMode.ALWAYS) {
+                continue;
+            }
+            update.set(field.mongoName(), val);
+        }
+        return update;
+    }
+
+    /** 批量 upsert：不存在插入、存在按实体策略更新 */
+    private static Update buildUpsertUpdate(
+            Object entity,
+            EntityUpsertDefinition def,
+            UpsertIdGenerator idGenerator
+    ) {
+        Update update = new Update();
+        if (def.generateIdOnInsert() && idGenerator != null && isIdEmpty(entity, def)) {
+            update.setOnInsert(def.idField(), idGenerator.nextId(def.entityClass()));
+        }
+        for (EntityUpsertDefinition.FieldMeta key : def.keyFields()) {
+            update.setOnInsert(key.mongoName(), key.read(entity));
+        }
         for (EntityUpsertDefinition.FieldMeta field : def.payloadFields()) {
             Object val = field.read(entity);
             if (val == null && field.mode() != FieldUpsertMode.ALWAYS) {
@@ -77,8 +149,11 @@ public final class ReflectiveUpsertBuilder {
                 default -> { }
             }
         }
-
         return update;
+    }
+
+    private static boolean isFieldWritableOnUpdate(EntityUpsertDefinition.FieldMeta field) {
+        return field.mode() == FieldUpsertMode.ALWAYS;
     }
 
     private static Object readTimeValue(Object entity, EntityUpsertDefinition def) {
@@ -139,13 +214,20 @@ public final class ReflectiveUpsertBuilder {
         }
     }
 
-    private static boolean needsTimeForward(EntityUpsertDefinition def) {
+    private static boolean needsTimeForward(EntityUpsertDefinition def, BulkWriteMode writeMode) {
+        if (!StringUtils.hasText(def.timeField())) {
+            return false;
+        }
+        if (writeMode == BulkWriteMode.INSERT_ONLY) {
+            return false;
+        }
+        if (writeMode == BulkWriteMode.UPDATE_ONLY) {
+            return true;
+        }
         if (def.strategy() == UpsertStrategy.UPSERT_IF_NEWER) {
             return true;
         }
-        return def.strategy() == UpsertStrategy.UPSERT_SELECTIVE
-                && def.timeField() != null
-                && !def.timeField().isBlank();
+        return def.strategy() == UpsertStrategy.UPSERT_SELECTIVE;
     }
 
     /** 存在时 set；插入时 set + setOnInsert，保证新文档也有值 */
