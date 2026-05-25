@@ -1,6 +1,6 @@
 # bluebell-mongo
 
-基于 **Spring Boot 3.2 + Spring Data MongoDB 4.x** 的 MongoDB 工具库：批量写入（bulk upsert）、组织数据权限（`organizationId`）、Aggregation 管道权限、微信消息四表业务封装。
+基于 **Spring Boot 3.2 + Spring Data MongoDB 4.x** 的 MongoDB 工具库：**简单批量写入**（新增/修改/upsert）、微信消息四表封装；数据权限为可选模块。
 
 ---
 
@@ -11,10 +11,11 @@
 - [快速开始](#快速开始)
 - [项目结构](#项目结构)
 - [数据模型与表规则](#数据模型与表规则)
-- [组织数据权限](#组织数据权限)
-- [批量写入](#批量写入)
-- [Aggregation 使用](#aggregation-使用)
-- [通用 Bulk API](#通用-bulk-api)
+- [快速开始（纯批量）](#快速开始纯批量)
+- [MongoBulkHelper API](#mongobulkhelper-api)
+- [微信四表写入](#微信四表写入)
+- [可选：组织数据权限](#可选组织数据权限)
+- [可选：Aggregation 权限](#可选aggregation-权限)
 - [性能建议](#性能建议)
 - [常见问题](#常见问题)
 - [类与职责索引](#类与职责索引)
@@ -30,7 +31,8 @@
 | 幂等与防旧盖新 | `uniqueId` 去重；`msgTime` 只向前更新，避免乱序覆盖 |
 | `@DataPermission` | 用户权限 ∩ 业务机构子树，自动拼接 `organizationId in (...)` |
 | Aggregation 权限 | 管道最前自动插入 `$match`；支持 Spring DSL 与原生 `Document` 管道 |
-| 可扩展 | `MongoBulkHelper` 可供非微信业务复用 |
+| 简单 API | `batchInsert` / `batchInsertOnly` / `batchUpdate` / `batchUpsert`，手写 Query+Update |
+| 可扩展 | `MongoBulkHelper` 供任意业务表复用 |
 
 ---
 
@@ -49,12 +51,13 @@ mvn -q compile
 
 ---
 
-## 快速开始
+## 快速开始（纯批量）
 
-### 1. 扫描组件
+### 1. 引入配置
 
 ```java
-@SpringBootApplication(scanBasePackages = {"com.yourcompany", "com.bluebell.mongo"})
+@Import(com.bluebell.mongo.config.MongoBulkConfig.class)
+@SpringBootApplication
 public class Application { }
 ```
 
@@ -67,7 +70,22 @@ spring:
       uri: mongodb://user:pass@host1:27017,host2:27017/your_db?authSource=admin&replicaSet=rs0
 ```
 
-### 3. 实现组织权限（必做，两个接口）
+### 3. 微信四表或通用批量
+
+```java
+@Autowired WxMsgBatchWriter wxMsgBatchWriter;
+@Autowired MongoBulkHelper mongoBulkHelper;
+
+wxMsgBatchWriter.writeBatchInTransaction(dtoList);
+```
+
+详见 [MongoBulkHelper API](#mongobulkhelper-api)。
+
+---
+
+## 快速开始（含数据权限）
+
+### 实现组织权限（两个接口）
 
 ```java
 /** ① 当前用户数据权限范围内的机构 ID */
@@ -150,13 +168,9 @@ src/main/java/com/bluebell/mongo/
 │   ├── DataPermissionAggregationExecutor.java
 │   ├── OrganizationPermissionService.java
 │   └── example/             # 参考示例（可复制改造）
+├── config/MongoBulkConfig.java
 ├── model/                   # 实体与 DTO
-    ├── upsert/                  # 注解 + 反射 bulk
-    │   ├── ReflectiveMongoBulkHelper.java
-    │   └── ReflectiveWxMsgBatchWriter.java
-    ├── config/                  # MongoTransactionManager 等 Bean
-    └── support/
-    └── SnowflakeIdGenerator.java
+└── support/                 # SnowflakeIdGenerator、EpochTimeUtils
 ```
 
 ---
@@ -202,7 +216,7 @@ db.wx_msg_type.createIndex({ type: 1 }, { unique: true })
 
 ---
 
-## 组织数据权限
+## 可选：组织数据权限
 
 ### 核心公式
 
@@ -272,15 +286,13 @@ public List<Vo> query() { ... }
 
 ---
 
-## 批量写入
-
-### 推荐：四表事务写入
+## 批量写入（微信）
 
 ```java
-@DataPermission
+@Autowired WxMsgBatchWriter wxMsgBatchWriter;
+
 public void saveBatch(List<WxMsgDTO> batch) {
-    // 建议每批 100～500 条，避免单事务过大
-    batchWriter.writeBatchInTransaction(batch);
+    wxMsgBatchWriter.writeBatchInTransaction(batch);
 }
 ```
 
@@ -388,123 +400,75 @@ Aggregation.lookup()
 
 ---
 
-## 反射批量 Upsert（注解驱动，推荐）
+## MongoBulkHelper API
 
-无需手写 `Update.set("field", ...)`，在**实体字段**上加注解，由 `ReflectiveMongoBulkHelper` 反射构建 Query/Update。
+注入 `MongoBulkHelper`，为每条数据提供 `Query` + `Update` 即可。
 
-### 实体级注解 `@UpsertEntity`
-
-| strategy | 含义 |
-|----------|------|
-| `INSERT_ONLY` | 按业务键：不存在插入，存在忽略（字段默认 `setOnInsert`） |
-| `FULL_BY_KEY` | 按业务键：不存在插入，存在则**全量 set 更新** |
-| `UPSERT_IF_NEWER` | 按业务键 + `timeField`：仅时间向前才更新 |
-| `UPSERT_SELECTIVE` | 不存在：插入（`generateIdOnInsert` 可生成雪花 `_id`）；存在：仅更新 `@UpsertOnUpdate` 字段；可选 `timeField` 防旧盖新 |
-| `rejectFutureTime` | 实体注解属性：`timeField` &gt; 当前时间不 insert/update；`timeField` 为 null 仍按业务键 upsert |
-
-```java
-@UpsertEntity(strategy = UpsertStrategy.INSERT_ONLY)
-public class WxMsgMain {
-    @UpsertKey
-    private String uniqueId;
-    private String wxId;   // 默认 INSERT_ONLY
-}
-
-/** 不存在插入 + 雪花 id；存在只更新 @UpsertOnUpdate；msgTime 更小不更新 */
-@UpsertEntity(
-    strategy = UpsertStrategy.UPSERT_SELECTIVE,
-    timeField = "msgTime",
-    generateIdOnInsert = true
-)
-public class WxMsgLatest {
-    @Id private Long id;
-    @UpsertKey private String wxId;
-    @UpsertKey private String chatType;
-    @UpsertKey private String talker;
-    @UpsertOnUpdate private String uniqueId;
-    @UpsertOnUpdate private Long msgTime;      // epoch 毫秒
-    private Long createTime;
-}
-```
-
-### 存在时选择性更新 `@UpsertOnUpdate`
-
-配合 `UPSERT_SELECTIVE`：未标注字段仅在**不存在插入**时写入；标注字段在**存在更新**时 `set`。
-
-### 字段级注解 `@UpsertField`（覆盖默认）
-
-| mode | 说明 |
+| 方法 | 含义 |
 |------|------|
-| `KEY` | 查询键，仅 `setOnInsert` 写入键值 |
-| `INSERT_ONLY` | 仅插入 |
-| `ALWAYS` | 插入/更新都 set |
-| `IGNORE` | 不参与 |
+| `batchInsert` | **批量插入**：直接 `insert` 列表（唯一键冲突会报错） |
+| `batchInsertOnly` | **批量新增**：`upsert` + 仅 `setOnInsert`，已存在忽略 |
+| `batchUpdate` | **批量修改**：只 `update`，不存在跳过 |
+| `batchUpsert` | **不存在插入、存在更新**：`upsert` + `set` / `setOnInsert` |
+| `batchUpsertMerged` | 批内合并后再 upsert |
+| `batchInsertOnlyDistinct` | 去重后字典式新增 |
+| `executeInTransaction` | 多表顺序执行，失败回滚 |
 
 ```java
-@UpsertField(mode = FieldUpsertMode.IGNORE)
-private String tempField;
+@Autowired MongoBulkHelper bulk;
+
+// 1. 批量新增（orderNo 已存在则忽略）
+bulk.batchInsertOnly(Order.class, list,
+    o -> Query.query(Criteria.where("orderNo").is(o.getOrderNo())),
+    o -> new Update().setOnInsert("orderNo", o.getOrderNo()).setOnInsert("name", o.getName()),
+    true);
+
+// 2. 批量修改（只改已有）
+bulk.batchUpdate(Order.class, list,
+    o -> Query.query(Criteria.where("orderNo").is(o.getOrderNo())),
+    o -> new Update().set("name", o.getName()),
+    true);
+
+// 3. 不存在插入、存在更新
+bulk.batchUpsert(Order.class, list,
+    o -> Query.query(Criteria.where("orderNo").is(o.getOrderNo())),
+    o -> new Update().set("name", o.getName()).setOnInsert("orderNo", o.getOrderNo()),
+    true);
+
+// 4. 纯插入实体列表
+bulk.batchInsert(Order.class, list, false);
 ```
 
-也可用 `@UpsertEntity(keys = {"orderNo"})` 代替多个 `@UpsertKey`。
+`ordered=true` 用于事务内；无事务可 `false` 提高吞吐。
 
-### 三种批量模式
-
-| 方法 | 模式 | 行为 |
-|------|------|------|
-| `bulkInsertByEntity` | `INSERT_ONLY` | **批量新增**：按 `@UpsertKey` 不存在才插入，已存在忽略 |
-| `bulkUpdateByEntity` | `UPDATE_ONLY` | **批量修改**：只 `update`，无匹配不插入；仅更新 `ALWAYS` / `@UpsertOnUpdate` 字段 |
-| `bulkUpsertByEntity` | `UPSERT` | **不存在插入、存在修改**：由实体 `UpsertStrategy` 决定更新范围 |
-
-```java
-@Autowired ReflectiveMongoBulkHelper reflectiveBulk;
-
-reflectiveBulk.bulkInsertByEntity(WxMsgMain.class, mainList, true);
-reflectiveBulk.bulkUpdateByEntity(WxMsgLatest.class, latestList, true);
-reflectiveBulk.bulkUpsertByEntity(WxMsgLatest.class, latestList, true);
-
-// 或显式模式
-reflectiveBulk.bulkByEntity(Order.class, orders, BulkWriteMode.UPSERT, true);
-```
-
-微信四表：`ReflectiveWxMsgBatchWriter.writeBatchInTransaction(dtoList)`（内部主表 insert、latest upsert 等）。
-
-实体需 **`@UpsertEntity` + `@UpsertKey`**；`rejectFutureTime` 三种模式均生效。
+示例：`bulk.example.WxMsgPureServiceExample`。
 
 ---
 
-## 通用 Bulk API
-
-适用于非微信业务表（手写 Query/Update 的底层 API）。
+## 微信四表写入
 
 ```java
-@Autowired
-DataPermissionMongoBulkHelper bulkHelper;
+@Autowired WxMsgBatchWriter wxMsgBatchWriter;
 
-@DataPermission
-public void saveOrders(List<OrderDTO> list) {
-    bulkHelper.bulkInsertOnly(
-            Order.class,
-            list,
-            o -> Query.query(Criteria.where("orderNo").is(o.getOrderNo())),
-            o -> new Update()
-                    .setOnInsert("orderNo", o.getOrderNo())
-                    .setOnInsert("organizationId", o.getOrganizationId()),
-            true  // 事务内 true
-    );
-}
+wxMsgBatchWriter.writeBatchInTransaction(dtoList);
 ```
 
-| 方法 | 用途 |
-|------|------|
-| `bulkUpsert` | 存在更新，不存在插入 |
-| `bulkUpdate` | 仅 update，不存在不插入 |
-| `bulkInsertOnly` | 仅 `setOnInsert`，存在忽略 |
-| `BulkWriteMode` | 反射工具三种模式枚举 |
-| `bulkUpsertMerged` | 批内按键合并后再 upsert |
-| `bulkInsertOnlyDistinct` | 去重后字典式插入 |
-| `executeInTransaction` | 多表顺序执行，失败回滚 |
+| 表 | 规则 |
+|----|------|
+| 主表 | `uniqueId` 不存在才插 |
+| 最新消息 | 会话键 upsert；`msgTime` 只向前；未来时间不写 |
+| 微信时间 | `wxId` + `lastMsgTime` 只向前 |
+| 类型字典 | `type` 不存在才插 |
 
-无权限场景使用 `MongoBulkHelper`（`com.bluebell.mongo.bulk`）。
+---
+
+## 可选：组织数据权限
+
+（保留原 permission 章节标题下的内容，在 ## 组织数据权限 前加可选）
+
+## 通用说明（权限版 Bulk）
+
+带权限时使用 `DataPermissionMongoBulkHelper`，方法名与 `MongoBulkHelper` 相同（`batch*` / `bulk*` 均可）。
 
 ---
 
@@ -562,13 +526,11 @@ A：实现 `OrganizationPermissionService` + `OrganizationHierarchyService` → 
 | `DataPermissionMongoBulkHelper` | bulk 自动权限 |
 | `TimeForwardCriteria` | 时间只向前查询条件 |
 | `MergeUtils` | 批内按键合并 |
-| `ReflectiveMongoBulkHelper` | 注解 + 反射通用 bulk |
-| `@UpsertEntity` / `@UpsertKey` | 实体 upsert 策略与业务键 |
-| `ReflectiveWxMsgBatchWriter` | 微信四表反射批量写 |
-| `MongoBulkConfig` | 事务管理器、Writer Bean |
+| `MongoBulkConfig` | 事务、`MongoBulkHelper`、`WxMsgBatchWriter` Bean |
+| `EpochTimeUtils` | 时间毫秒、未来时间校验 |
 | `SnowflakeIdGenerator` | 最新消息表 `_id` 雪花 |
 
-示例代码：`permission.example.WxMsgServiceExample`、`AggregationServiceExample`。
+示例：`bulk.example.WxMsgPureServiceExample`、`permission.example.WxMsgServiceExample`。
 
 ---
 

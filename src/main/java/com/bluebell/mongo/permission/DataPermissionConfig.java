@@ -10,15 +10,14 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.mongodb.MongoDatabaseFactory;
 import org.springframework.data.mongodb.core.convert.MongoConverter;
 
-import com.bluebell.mongo.config.MongoUpsertConfig;
-import com.bluebell.mongo.permission.DataPermissionWxMsgBatchWriter;
+import com.bluebell.mongo.config.MongoBulkConfig;
 
 /**
- * 数据权限模块（可选）。与 {@link MongoUpsertConfig} 分开引入。
+ * 数据权限模块（<b>可选</b>）。与 {@link MongoBulkConfig} 分开引入。
  */
 @Configuration
 @EnableAspectJAutoProxy
-@Import(MongoUpsertConfig.class)
+@Import(MongoBulkConfig.class)
 public class DataPermissionConfig {
 
     @Bean

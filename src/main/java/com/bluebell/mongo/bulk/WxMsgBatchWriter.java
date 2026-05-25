@@ -60,7 +60,8 @@ public class WxMsgBatchWriter {
         writeMsgTypeDict(batch);
     }
 
-    private List<WxMsgDTO> filterWritable(List<WxMsgDTO> batch) {
+    /** 未来时间不写入；msgTime 为 null 仍允许。 */
+    public static List<WxMsgDTO> filterWritable(List<WxMsgDTO> batch) {
         if (batch == null || batch.isEmpty()) {
             return List.of();
         }
@@ -69,7 +70,7 @@ public class WxMsgBatchWriter {
 
     public BulkWriteResult writeMain(List<WxMsgDTO> batch) {
         List<WxMsgDTO> writable = filterWritable(batch);
-        return bulkHelper.bulkInsertOnly(
+        return bulkHelper.batchInsertOnly(
                 WxMsgMain.class,
                 writable,
                 m -> Query.query(Criteria.where("uniqueId").is(m.getUniqueId())),
@@ -80,7 +81,7 @@ public class WxMsgBatchWriter {
 
     public BulkWriteResult writeLatest(List<WxMsgDTO> batch) {
         List<WxMsgDTO> writable = filterWritable(batch);
-        return bulkHelper.bulkUpsertMerged(
+        return bulkHelper.batchUpsertMerged(
                 WxMsgLatest.class,
                 writable,
                 this::sessionKey,
@@ -111,7 +112,7 @@ public class WxMsgBatchWriter {
                 .map(e -> new WxTimeItem(e.getKey(), e.getValue()))
                 .toList();
 
-        return bulkHelper.bulkUpsert(
+        return bulkHelper.batchUpsert(
                 WxLastTime.class,
                 items,
                 item -> buildWxTimeQuery(item.wxId(), item.maxTime()),
@@ -121,7 +122,7 @@ public class WxMsgBatchWriter {
     }
 
     public BulkWriteResult writeMsgTypeDict(List<WxMsgDTO> batch) {
-        return bulkHelper.bulkInsertOnlyDistinct(
+        return bulkHelper.batchInsertOnlyDistinct(
                 WxMsgType.class,
                 filterWritable(batch),
                 WxMsgDTO::getType,
