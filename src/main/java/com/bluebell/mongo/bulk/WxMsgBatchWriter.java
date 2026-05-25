@@ -126,9 +126,9 @@ public class WxMsgBatchWriter {
                 WxMsgType.class,
                 filterWritable(batch),
                 WxMsgDTO::getType,
-                type -> Query.query(Criteria.where("type").is(type)),
-                type -> new Update()
-                        .setOnInsert("type", type)
+                dto -> Query.query(Criteria.where("type").is(dto.getType())),
+                dto -> new Update()
+                        .setOnInsert("type", dto.getType())
                         .setOnInsert("createTime", EpochTimeUtils.currentTimeMillis()),
                 inTransaction()
         );

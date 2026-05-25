@@ -411,7 +411,8 @@ Aggregation.lookup()
 | `batchUpdate` | **批量修改**：只 `update`，不存在跳过 |
 | `batchUpsert` | **不存在插入、存在更新**：`upsert` + `set` / `setOnInsert` |
 | `batchUpsertMerged` | 批内合并后再 upsert |
-| `batchInsertOnlyDistinct` | 去重后字典式新增 |
+| `batchInsertOnlyDistinct` | 去重后新增：去重键 `K` 任意类型；Query/Update 由源对象 `S` 构建（支持组合条件） |
+| `batchInsertOnlyDistinctByKey` | 去重后新增：Query/Update 仅依赖去重键 `K` |
 | `executeInTransaction` | 多表顺序执行，失败回滚 |
 
 ```java
@@ -437,6 +438,14 @@ bulk.batchUpsert(Order.class, list,
 
 // 4. 纯插入实体列表
 bulk.batchInsert(Order.class, list, false);
+
+// 5. 去重后新增（type 可为 Integer/String；组合键用 record 去重）
+record TypeKey(String wxId, Object type) {}
+bulk.batchInsertOnlyDistinct(WxMsgType.class, dtoList,
+    dto -> new TypeKey(dto.getWxId(), dto.getType()),
+    dto -> Query.query(Criteria.where("wxId").is(dto.getWxId()).and("type").is(dto.getType())),
+    dto -> new Update().setOnInsert("type", dto.getType()).setOnInsert("wxId", dto.getWxId()),
+    false);
 ```
 
 `ordered=true` 用于事务内；无事务可 `false` 提高吞吐。

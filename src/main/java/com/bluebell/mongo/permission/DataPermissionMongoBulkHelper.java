@@ -1,7 +1,6 @@
 package com.bluebell.mongo.permission;
 
 import com.bluebell.mongo.bulk.MongoBulkHelper;
-import com.bluebell.mongo.bulk.MergeUtils;
 import com.bluebell.mongo.bulk.UpsertSpec;
 import com.mongodb.bulk.BulkWriteResult;
 import org.springframework.data.mongodb.core.query.Query;
@@ -57,18 +56,41 @@ public class DataPermissionMongoBulkHelper {
         );
     }
 
-    public <S, E> BulkWriteResult bulkInsertOnlyDistinct(
+    /**
+     * 去重后批量新增：去重键与 Query/Update 均支持任意类型（与 {@link MongoBulkHelper#batchInsertOnlyDistinct} 一致）。
+     */
+    public <S, E, K> BulkWriteResult bulkInsertOnlyDistinct(
             Class<E> entityClass,
             Collection<S> source,
-            Function<S, String> distinctKeyFn,
-            Function<String, Query> queryByKeyFn,
-            Function<String, Update> insertOnlyUpdateFn,
+            Function<S, K> distinctKeyFn,
+            Function<S, Query> queryFn,
+            Function<S, Update> insertOnlyUpdateFn,
             boolean ordered
     ) {
-        return delegate.bulkInsertOnlyDistinct(
-                entityClass, source, distinctKeyFn,
+        return delegate.batchInsertOnlyDistinct(
+                entityClass,
+                source,
+                distinctKeyFn,
+                wrapQuery(queryFn),
+                wrapUpdate(insertOnlyUpdateFn),
+                ordered
+        );
+    }
+
+    public <S, E, K> BulkWriteResult bulkInsertOnlyDistinctByKey(
+            Class<E> entityClass,
+            Collection<S> source,
+            Function<S, K> distinctKeyFn,
+            Function<K, Query> queryByKeyFn,
+            Function<K, Update> insertOnlyUpdateFn,
+            boolean ordered
+    ) {
+        return delegate.batchInsertOnlyDistinctByKey(
+                entityClass,
+                source,
+                distinctKeyFn,
                 key -> DataPermissionCriteria.apply(queryByKeyFn.apply(key)),
-                upd -> wrapUpdateOne(insertOnlyUpdateFn.apply(key)),
+                key -> wrapUpdateOne(insertOnlyUpdateFn.apply(key)),
                 ordered
         );
     }

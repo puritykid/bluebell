@@ -1,6 +1,7 @@
 package com.bluebell.mongo.bulk;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,32 @@ import java.util.function.Function;
 public final class MergeUtils {
 
     private MergeUtils() {
+    }
+
+    /**
+     * 按任意类型去重键保留一条（默认后者覆盖前者）。
+     */
+    public static <S, K> Map<K, S> dedupeByKey(Collection<S> source, Function<S, K> keyFn) {
+        return dedupeByKey(source, keyFn, (a, b) -> b);
+    }
+
+    public static <S, K> Map<K, S> dedupeByKey(
+            Collection<S> source,
+            Function<S, K> keyFn,
+            BinaryOperator<S> mergeFn
+    ) {
+        if (source == null || source.isEmpty()) {
+            return Map.of();
+        }
+        Map<K, S> map = new LinkedHashMap<>();
+        for (S item : source) {
+            K key = keyFn.apply(item);
+            if (!DistinctKeyUtils.isPresent(key)) {
+                continue;
+            }
+            map.merge(key, item, mergeFn);
+        }
+        return map;
     }
 
     public static <T> List<T> mergeByKey(List<T> source, Function<T, String> keyFn, BinaryOperator<T> mergeFn) {
