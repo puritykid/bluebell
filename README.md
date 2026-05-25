@@ -411,7 +411,7 @@ Aggregation.lookup()
 | `batchUpdate` | **批量修改**：只 `update`，不存在跳过 |
 | `batchUpsert` | **不存在插入、存在更新**：`upsert` + `set` / `setOnInsert` |
 | `batchUpsertMerged` | 批内合并后再 upsert |
-| `batchInsertOnlyDistinct` | 去重后新增：去重键 `K` 任意类型；Query/Update 由源对象 `S` 构建（支持组合条件） |
+| `batchInsertOnlyDistinct` | 去重后新增：Query/Update **入参为实体 E**（支持 DTO→实体映射） |
 | `batchInsertOnlyDistinctByKey` | 去重后新增：Query/Update 仅依赖去重键 `K` |
 | `executeInTransaction` | 多表顺序执行，失败回滚 |
 
@@ -439,12 +439,20 @@ bulk.batchUpsert(Order.class, list,
 // 4. 纯插入实体列表
 bulk.batchInsert(Order.class, list, false);
 
-// 5. 去重后新增（type 可为 Integer/String；组合键用 record 去重）
-record TypeKey(String wxId, Object type) {}
+// 5. 去重后新增（Query/Update 入参为实体）
+List<WxMsgType> types = ...;
+bulk.batchInsertOnlyDistinct(WxMsgType.class, types,
+    WxMsgType::getType,
+    e -> Query.query(Criteria.where("type").is(e.getType())),
+    e -> new Update().setOnInsert("type", e.getType()).setOnInsert("createTime", e.getCreateTime()),
+    false);
+
+// 5b. 从 DTO 去重，再转实体
 bulk.batchInsertOnlyDistinct(WxMsgType.class, dtoList,
-    dto -> new TypeKey(dto.getWxId(), dto.getType()),
-    dto -> Query.query(Criteria.where("wxId").is(dto.getWxId()).and("type").is(dto.getType())),
-    dto -> new Update().setOnInsert("type", dto.getType()).setOnInsert("wxId", dto.getWxId()),
+    WxMsgDTO::getType,
+    dto -> { WxMsgType e = new WxMsgType(); e.setType(dto.getType()); return e; },
+    e -> Query.query(Criteria.where("type").is(e.getType())),
+    e -> new Update().setOnInsert("type", e.getType()),
     false);
 ```
 

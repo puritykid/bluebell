@@ -76,10 +76,16 @@ public class DataPermissionWxMsgBatchWriter {
         return bulkHelper.bulkInsertOnlyDistinct(WxMsgType.class,
                 WxMsgBatchWriter.filterWritable(batch),
                 WxMsgDTO::getType,
-                dto -> Query.query(Criteria.where("type").is(dto.getType())),
-                dto -> new Update()
-                        .setOnInsert("type", dto.getType())
-                        .setOnInsert("createTime", EpochTimeUtils.currentTimeMillis()),
+                dto -> {
+                    WxMsgType e = new WxMsgType();
+                    e.setType(dto.getType());
+                    e.setCreateTime(EpochTimeUtils.currentTimeMillis());
+                    return e;
+                },
+                e -> Query.query(Criteria.where("type").is(e.getType())),
+                e -> new Update()
+                        .setOnInsert("type", e.getType())
+                        .setOnInsert("createTime", e.getCreateTime()),
                 inTransaction());
     }
 

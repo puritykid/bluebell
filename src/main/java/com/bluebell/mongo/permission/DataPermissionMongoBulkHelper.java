@@ -1,5 +1,6 @@
 package com.bluebell.mongo.permission;
 
+import com.bluebell.mongo.bulk.InsertOnlyDistinctSpec;
 import com.bluebell.mongo.bulk.MongoBulkHelper;
 import com.bluebell.mongo.bulk.UpsertSpec;
 import com.mongodb.bulk.BulkWriteResult;
@@ -56,21 +57,50 @@ public class DataPermissionMongoBulkHelper {
         );
     }
 
-    /**
-     * 去重后批量新增：去重键与 Query/Update 均支持任意类型（与 {@link MongoBulkHelper#batchInsertOnlyDistinct} 一致）。
-     */
+    /** 实体列表去重插入，Query/Update 入参为实体 {@code E}。 */
+    public <E, K> BulkWriteResult bulkInsertOnlyDistinct(
+            Class<E> entityClass,
+            Collection<E> entities,
+            Function<E, K> distinctKeyFn,
+            Function<E, Query> queryFn,
+            Function<E, Update> insertOnlyUpdateFn,
+            boolean ordered
+    ) {
+        return delegate.batchInsertOnlyDistinct(
+                entityClass,
+                entities,
+                distinctKeyFn,
+                wrapQuery(queryFn),
+                wrapUpdate(insertOnlyUpdateFn),
+                ordered
+        );
+    }
+
+    public <E, K> BulkWriteResult bulkInsertOnlyDistinct(
+            Class<E> entityClass,
+            Collection<E> entities,
+            InsertOnlyDistinctSpec<E, K> spec,
+            boolean ordered
+    ) {
+        return bulkInsertOnlyDistinct(
+                entityClass, entities, spec.distinctKeyFn(), spec.queryFn(), spec.updateFn(), ordered);
+    }
+
+    /** DTO 去重后转实体，Query/Update 入参为实体 {@code E}。 */
     public <S, E, K> BulkWriteResult bulkInsertOnlyDistinct(
             Class<E> entityClass,
             Collection<S> source,
             Function<S, K> distinctKeyFn,
-            Function<S, Query> queryFn,
-            Function<S, Update> insertOnlyUpdateFn,
+            Function<S, E> toEntity,
+            Function<E, Query> queryFn,
+            Function<E, Update> insertOnlyUpdateFn,
             boolean ordered
     ) {
         return delegate.batchInsertOnlyDistinct(
                 entityClass,
                 source,
                 distinctKeyFn,
+                toEntity,
                 wrapQuery(queryFn),
                 wrapUpdate(insertOnlyUpdateFn),
                 ordered
@@ -103,11 +133,11 @@ public class DataPermissionMongoBulkHelper {
         return delegate;
     }
 
-    private <S> Function<S, Query> wrapQuery(Function<S, Query> queryFn) {
+    private <T> Function<T, Query> wrapQuery(Function<T, Query> queryFn) {
         return item -> DataPermissionCriteria.apply(queryFn.apply(item));
     }
 
-    private <S> Function<S, Update> wrapUpdate(Function<S, Update> updateFn) {
+    private <T> Function<T, Update> wrapUpdate(Function<T, Update> updateFn) {
         return item -> wrapUpdateOne(updateFn.apply(item));
     }
 
