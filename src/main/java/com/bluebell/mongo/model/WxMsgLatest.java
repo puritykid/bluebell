@@ -5,15 +5,12 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 
-import java.time.LocalDateTime;
-
 @Data
 @Document("wx_msg_latest")
 @CompoundIndex(name = "uk_session", def = "{'wxId':1,'chatType':1,'talker':1}", unique = true)
 public class WxMsgLatest {
     @Id
     private Long id;
-    @Indexed
     private String organizationId;
     private String wxId;
     private String chatType;
@@ -21,5 +18,5 @@ public class WxMsgLatest {
     private String uniqueId;
     private String type;
     private Object content;
-    private LocalDateTime msgTime;
+    private Long msgTime;
 }

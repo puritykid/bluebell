@@ -13,7 +13,13 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * MongoDB 批量 upsert 通用工具：避免「先查再写」，统一 bulk + 可选事务。
+ * MongoDB 批量写入通用工具：避免「先查再写」，统一 bulk + 可选事务。
+ * <ul>
+ *   <li>{@link #batchInsert} — 批量插入（重复键可能报错）</li>
+ *   <li>{@link #batchInsertOnly} — 批量新增：不存在才插，已存在忽略</li>
+ *   <li>{@link #batchUpdate} — 批量修改：只 update，不存在跳过</li>
+ *   <li>{@link #batchUpsert} — 不存在插入、存在更新</li>
+ * </ul>
  */
 public class MongoBulkHelper {
 
@@ -57,16 +63,31 @@ public class MongoBulkHelper {
      * @param spec         查询与 Update 构造
      * @param ordered      是否有序（事务内必须 true）
      */
-    public <S, E> BulkWriteResult bulkUpsert(
+    /**
+     * 批量插入实体列表（纯 insert；主键/唯一键冲突由 MongoDB 报错）。
+     */
+    public <E> BulkWriteResult batchInsert(Class<E> entityClass, List<E> entities, boolean ordered) {
+        if (entities == null || entities.isEmpty()) {
+            return null;
+        }
+        BulkOperations.BulkMode mode = ordered
+                ? BulkOperations.BulkMode.ORDERED
+                : BulkOperations.BulkMode.UNORDERED;
+        BulkOperations bulk = mongoTemplate.bulkOps(mode, entityClass);
+        bulk.insert(entities);
+        return bulk.execute();
+    }
+
+    public <S, E> BulkWriteResult batchUpsert(
             Class<E> entityClass,
             List<S> source,
             UpsertSpec<S> spec,
             boolean ordered
     ) {
-        return bulkUpsert(entityClass, source, spec.queryFn(), spec.updateFn(), ordered);
+        return batchUpsert(entityClass, source, spec.queryFn(), spec.updateFn(), ordered);
     }
 
-    public <S, E> BulkWriteResult bulkUpsert(
+    public <S, E> BulkWriteResult batchUpsert(
             Class<E> entityClass,
             List<S> source,
             Function<S, Query> queryFn,
@@ -86,23 +107,42 @@ public class MongoBulkHelper {
         return bulk.execute();
     }
 
+    /** 批量修改：仅更新已存在文档，无匹配则不插入。 */
+    public <S, E> BulkWriteResult batchUpdate(
+            Class<E> entityClass,
+            List<S> source,
+            Function<S, Query> queryFn,
+            Function<S, Update> updateFn,
+            boolean ordered
+    ) {
+        if (source == null || source.isEmpty()) {
+            return null;
+        }
+        BulkOperations.BulkMode mode = ordered
+                ? BulkOperations.BulkMode.ORDERED
+                : BulkOperations.BulkMode.UNORDERED;
+        BulkOperations bulk = mongoTemplate.bulkOps(mode, entityClass);
+        for (S item : source) {
+            bulk.update(queryFn.apply(item), updateFn.apply(item));
+        }
+        return bulk.execute();
+    }
+
     /**
-     * 仅插入：已存在则忽略（Update 只含 setOnInsert，不要 set）。
+     * 批量新增：按 query 匹配，不存在才插入（Update 仅 setOnInsert）。
      */
-    public <S, E> BulkWriteResult bulkInsertOnly(
+    public <S, E> BulkWriteResult batchInsertOnly(
             Class<E> entityClass,
             List<S> source,
             Function<S, Query> queryFn,
             Function<S, Update> insertOnlyUpdateFn,
             boolean ordered
     ) {
-        return bulkUpsert(entityClass, source, queryFn, insertOnlyUpdateFn, ordered);
+        return batchUpsert(entityClass, source, queryFn, insertOnlyUpdateFn, ordered);
     }
 
-    /**
-     * 先按键合并，再 bulk upsert。
-     */
-    public <S, E> BulkWriteResult bulkUpsertMerged(
+    /** 先按键合并，再 batchUpsert。 */
+    public <S, E> BulkWriteResult batchUpsertMerged(
             Class<E> entityClass,
             List<S> source,
             Function<S, String> mergeKeyFn,
@@ -111,35 +151,118 @@ public class MongoBulkHelper {
             boolean ordered
     ) {
         List<S> merged = MergeUtils.mergeByKey(source, mergeKeyFn, mergeFn);
-        return bulkUpsert(entityClass, merged, spec, ordered);
+        return batchUpsert(entityClass, merged, spec, ordered);
     }
 
     /**
-     * 对集合去重后做「没有才插入」字典写入。
+     * 去重后批量新增：传入实体列表，Query / Update 回调参数均为实体 {@code E}。
      */
-    public <S, E> BulkWriteResult bulkInsertOnlyDistinct(
+    public <E, K> BulkWriteResult batchInsertOnlyDistinct(
+            Class<E> entityClass,
+            Collection<E> entities,
+            InsertOnlyDistinctSpec<E, K> spec,
+            boolean ordered
+    ) {
+        return batchInsertOnlyDistinct(
+                entityClass, entities, spec.distinctKeyFn(), spec.queryFn(), spec.updateFn(), ordered);
+    }
+
+    /**
+     * 去重后批量新增：去重键 {@code K} 任意类型；{@code queryFn} / {@code updateFn} 入参为实体 {@code E}。
+     */
+    public <E, K> BulkWriteResult batchInsertOnlyDistinct(
+            Class<E> entityClass,
+            Collection<E> entities,
+            Function<E, K> distinctKeyFn,
+            Function<E, Query> queryFn,
+            Function<E, Update> insertOnlyUpdateFn,
+            boolean ordered
+    ) {
+        if (entities == null || entities.isEmpty()) {
+            return null;
+        }
+        java.util.Map<K, E> deduped = MergeUtils.dedupeByKey(entities, distinctKeyFn);
+        if (deduped.isEmpty()) {
+            return null;
+        }
+        BulkOperations.BulkMode mode = ordered
+                ? BulkOperations.BulkMode.ORDERED
+                : BulkOperations.BulkMode.UNORDERED;
+        BulkOperations bulk = mongoTemplate.bulkOps(mode, entityClass);
+        for (E entity : deduped.values()) {
+            bulk.upsert(queryFn.apply(entity), insertOnlyUpdateFn.apply(entity));
+        }
+        return bulk.execute();
+    }
+
+    /**
+     * 去重后批量新增：源数据为 {@code S}（如 DTO），先 {@code toEntity} 再按实体构建 Query/Update。
+     */
+    public <S, E, K> BulkWriteResult batchInsertOnlyDistinct(
             Class<E> entityClass,
             Collection<S> source,
-            Function<S, String> distinctKeyFn,
-            Function<String, Query> queryByKeyFn,
-            Function<String, Update> insertOnlyUpdateFn,
+            Function<S, K> distinctKeyFn,
+            Function<S, E> toEntity,
+            Function<E, Query> queryFn,
+            Function<E, Update> insertOnlyUpdateFn,
             boolean ordered
     ) {
         if (source == null || source.isEmpty()) {
             return null;
         }
-        List<String> keys = source.stream().map(distinctKeyFn).distinct().toList();
+        java.util.Map<K, S> dedupedSource = MergeUtils.dedupeByKey(source, distinctKeyFn);
+        if (dedupedSource.isEmpty()) {
+            return null;
+        }
         BulkOperations.BulkMode mode = ordered
                 ? BulkOperations.BulkMode.ORDERED
                 : BulkOperations.BulkMode.UNORDERED;
         BulkOperations bulk = mongoTemplate.bulkOps(mode, entityClass);
-        for (String key : keys) {
-            if (key == null || key.isBlank()) {
-                continue;
-            }
+        for (S item : dedupedSource.values()) {
+            E entity = toEntity.apply(item);
+            bulk.upsert(queryFn.apply(entity), insertOnlyUpdateFn.apply(entity));
+        }
+        return bulk.execute();
+    }
+
+    /**
+     * 去重后批量新增：Query/Update 仅依赖去重键 {@code K}（单字段、键即查询条件时使用）。
+     */
+    public <S, E, K> BulkWriteResult batchInsertOnlyDistinctByKey(
+            Class<E> entityClass,
+            Collection<S> source,
+            Function<S, K> distinctKeyFn,
+            Function<K, Query> queryByKeyFn,
+            Function<K, Update> insertOnlyUpdateFn,
+            boolean ordered
+    ) {
+        if (source == null || source.isEmpty()) {
+            return null;
+        }
+        java.util.Map<K, S> deduped = MergeUtils.dedupeByKey(source, distinctKeyFn);
+        if (deduped.isEmpty()) {
+            return null;
+        }
+        BulkOperations.BulkMode mode = ordered
+                ? BulkOperations.BulkMode.ORDERED
+                : BulkOperations.BulkMode.UNORDERED;
+        BulkOperations bulk = mongoTemplate.bulkOps(mode, entityClass);
+        for (java.util.Map.Entry<K, S> entry : deduped.entrySet()) {
+            K key = entry.getKey();
             bulk.upsert(queryByKeyFn.apply(key), insertOnlyUpdateFn.apply(key));
         }
         return bulk.execute();
+    }
+
+    /** {@link #batchInsertOnlyDistinct(Class, Collection, InsertOnlyDistinctSpec, boolean)} 的别名。 */
+    public <E, K> BulkWriteResult bulkInsertOnlyDistinct(
+            Class<E> entityClass,
+            Collection<E> entities,
+            InsertOnlyDistinctSpec<E, K> spec,
+            boolean ordered
+    ) {
+        return batchInsertOnlyDistinct(
+                entityClass, entities, spec.distinctKeyFn(), spec.queryFn(), spec.updateFn(), ordered);
     }
 
     public MongoTemplate getMongoTemplate() {
@@ -157,5 +280,44 @@ public class MongoBulkHelper {
         long t0 = System.nanoTime();
         action.get();
         return (System.nanoTime() - t0) / 1_000_000;
+    }
+
+    // —— 旧方法名兼容 ——
+
+    public <S, E> BulkWriteResult bulkUpsert(
+            Class<E> entityClass, List<S> source, UpsertSpec<S> spec, boolean ordered) {
+        return batchUpsert(entityClass, source, spec, ordered);
+    }
+
+    public <S, E> BulkWriteResult bulkUpsert(
+            Class<E> entityClass, List<S> source, Function<S, Query> queryFn,
+            Function<S, Update> updateFn, boolean ordered) {
+        return batchUpsert(entityClass, source, queryFn, updateFn, ordered);
+    }
+
+    public <S, E> BulkWriteResult bulkUpdate(
+            Class<E> entityClass, List<S> source, Function<S, Query> queryFn,
+            Function<S, Update> updateFn, boolean ordered) {
+        return batchUpdate(entityClass, source, queryFn, updateFn, ordered);
+    }
+
+    public <S, E> BulkWriteResult bulkInsertOnly(
+            Class<E> entityClass, List<S> source, Function<S, Query> queryFn,
+            Function<S, Update> insertOnlyUpdateFn, boolean ordered) {
+        return batchInsertOnly(entityClass, source, queryFn, insertOnlyUpdateFn, ordered);
+    }
+
+    public <S, E> BulkWriteResult bulkUpsertMerged(
+            Class<E> entityClass, List<S> source, Function<S, String> mergeKeyFn,
+            java.util.function.BinaryOperator<S> mergeFn, UpsertSpec<S> spec, boolean ordered) {
+        return batchUpsertMerged(entityClass, source, mergeKeyFn, mergeFn, spec, ordered);
+    }
+
+    /** @deprecated 请用 {@link #batchInsertOnlyDistinct}（按源对象 S）或 {@link #batchInsertOnlyDistinctByKey} */
+    @Deprecated
+    public <S, E, K> BulkWriteResult bulkInsertOnlyDistinct(
+            Class<E> entityClass, Collection<S> source, Function<S, K> distinctKeyFn,
+            Function<K, Query> queryByKeyFn, Function<K, Update> insertOnlyUpdateFn, boolean ordered) {
+        return batchInsertOnlyDistinctByKey(entityClass, source, distinctKeyFn, queryByKeyFn, insertOnlyUpdateFn, ordered);
     }
 }

@@ -2,8 +2,6 @@ package com.bluebell.mongo.config;
 
 import com.bluebell.mongo.bulk.MongoBulkHelper;
 import com.bluebell.mongo.bulk.WxMsgBatchWriter;
-import com.bluebell.mongo.permission.DataPermissionWxMsgBatchWriter;
-import com.bluebell.mongo.permission.DataPermissionMongoBulkHelper;
 import com.bluebell.mongo.support.SnowflakeIdGenerator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,6 +11,11 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * MongoDB 批量写入配置（不含数据权限）。
+ * <p>
+ * 需要数据权限时，额外引入 {@link com.bluebell.mongo.permission.DataPermissionConfig}。
+ */
 @Configuration
 @EnableTransactionManagement
 public class MongoBulkConfig {
@@ -33,14 +36,12 @@ public class MongoBulkConfig {
     }
 
     @Bean
-    public WxMsgBatchWriter wxMsgBatchWriter(MongoBulkHelper mongoBulkHelper, SnowflakeIdGenerator snowflake) {
-        return new WxMsgBatchWriter(mongoBulkHelper, snowflake);
+    public SnowflakeIdGenerator snowflakeIdGenerator() {
+        return new SnowflakeIdGenerator();
     }
 
     @Bean
-    public DataPermissionWxMsgBatchWriter dataPermissionWxMsgBatchWriter(
-            DataPermissionMongoBulkHelper dataPermissionMongoBulkHelper,
-            SnowflakeIdGenerator snowflake) {
-        return new DataPermissionWxMsgBatchWriter(dataPermissionMongoBulkHelper, snowflake);
+    public WxMsgBatchWriter wxMsgBatchWriter(MongoBulkHelper mongoBulkHelper, SnowflakeIdGenerator snowflake) {
+        return new WxMsgBatchWriter(mongoBulkHelper, snowflake);
     }
 }

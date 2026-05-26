@@ -1,6 +1,7 @@
 package com.bluebell.mongo.permission.example;
 
 import com.bluebell.mongo.model.WxMsgDTO;
+import com.bluebell.mongo.permission.BizOrgId;
 import com.bluebell.mongo.permission.DataPermission;
 import com.bluebell.mongo.permission.DataPermissionWxMsgBatchWriter;
 import lombok.RequiredArgsConstructor;
@@ -19,8 +20,13 @@ public class WxMsgServiceExample {
         batchWriter.writeBatchInTransaction(list);
     }
 
-    @DataPermission(field = "organizationId")
-    public void saveBatchCustomField(List<WxMsgDTO> list) {
+    @DataPermission
+    public void saveBatch(@BizOrgId String organizationId, List<WxMsgDTO> list) {
+        batchWriter.writeBatchInTransaction(list);
+    }
+
+    @DataPermission(bizOrgParam = "organizationId")
+    public void saveBatchByParamName(String organizationId, List<WxMsgDTO> list) {
         batchWriter.writeBatchInTransaction(list);
     }
 }
